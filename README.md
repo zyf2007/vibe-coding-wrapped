@@ -2,20 +2,17 @@
 
 Local-first CLI that turns Codex, Claude Code, and OpenCode session logs into a versioned JSON report and optional static HTML. Reports support calendar years and months, multiple copied Agent data directories, prompt highlights, tools, models, tokens, code changes, and optional Git activity.
 
-## Run with npx
-
-```bash
-npx vibe-coding-wrapped build \
-  --month 2026-07 \
-  -i ~/.codex \
-  --out ./wrapped-2026-07
-```
-
-`build` produces JSON only. Install globally to use the shorter command and shell completion:
+## Install
 
 ```bash
 npm install -g vibe-coding-wrapped
 vibe-wrapped --help
+```
+
+After installation, the shortest way to generate and preview the current year's report is:
+
+```bash
+vibe-wrapped serve
 ```
 
 The global installer registers zsh or bash completion when it can identify the current shell. Open a new shell, then type `vibe-wrapped -` and press Tab to browse options with descriptions. Manual activation is also available:
