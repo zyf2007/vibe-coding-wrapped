@@ -145,7 +145,18 @@ function languages(bundle) {
 
 function modelMap(bundle) {
   const root = page("model-map", "CREATION / 03", "模型使用地图", "red"); const models = value(bundle.models.items, []); const hours = value(bundle.models.byHour, []); const matrix = node("div", "matrix"); const hourLookup = new Map(hours.map((item) => [item.hour, item.values])); const max = Math.max(1, ...hours.flatMap((item) => Object.values(item.values)));
-  models.slice(0, 6).forEach((model) => { matrix.append(node("span", "model-name", model.displayName)); for (let hour = 0; hour < 24; hour += 1) { const cell = node("i"); cell.style.setProperty("--level", String(Math.ceil(((hourLookup.get(hour)?.[model.modelId] || 0) / max) * 7))); cell.title = `${String(hour).padStart(2,"0")}:00 · ${hourLookup.get(hour)?.[model.modelId] || 0} turns`; matrix.append(cell); } }); root.append(matrix); const transitions = value(bundle.models.transitions, []); foot(root, `${models.length} 个模型 · ${transitions.reduce((sum,item)=>sum+item.count,0)} 次相邻模型变化 · 不解释选择原因`, bundle); return root;
+  const head = node("div", "matrix-head"); head.append(node("span", "model-name", "模型 / 小时"));
+  for (let hour = 0; hour < 24; hour += 1) head.append(node("span", `matrix-hour${hour % 2 ? " odd-hour" : ""}`, hour % 2 ? "" : String(hour).padStart(2, "0")));
+  matrix.append(head);
+  models.slice(0, 6).forEach((model) => {
+    const row = node("div", "matrix-row"); row.append(node("span", "model-name", model.displayName));
+    for (let hour = 0; hour < 24; hour += 1) {
+      const count = hourLookup.get(hour)?.[model.modelId] || 0; const cell = node("i", hour % 2 ? "odd-hour" : "");
+      cell.style.setProperty("--level", String(Math.ceil((count / max) * 7))); cell.title = `${String(hour).padStart(2,"0")}:00 · ${count} turns`; cell.setAttribute("aria-label", cell.title); row.append(cell);
+    }
+    matrix.append(row);
+  });
+  root.append(matrix); const transitions = value(bundle.models.transitions, []); foot(root, `${models.length} 个模型 · 色深表示该小时 turn 数 · ${transitions.reduce((sum,item)=>sum+item.count,0)} 次相邻模型变化`, bundle); return root;
 }
 
 function tokenJourney(bundle) {

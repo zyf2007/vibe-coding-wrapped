@@ -82,9 +82,11 @@ h2 { margin-bottom: 0; font-size: clamp(32px, 5vw, 74px); line-height: 1; letter
 .word-context blockquote { margin: 0 0 18px; font-size: clamp(17px, 2vw, 27px); line-height: 1.45; font-weight: 650; overflow-wrap: anywhere; }
 .sentence-strip { display: flex; gap: 20px; overflow: hidden; border-top: 1px solid var(--line); padding-top: 14px; }
 .sentence-strip span { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.matrix { align-self: center; display: grid; grid-template-columns: minmax(100px, .8fr) repeat(24, minmax(8px, 1fr)); gap: 3px; align-items: center; }
+.matrix { align-self: center; display: grid; gap: 5px; width: 100%; }
+.matrix-head, .matrix-row { display: grid; grid-template-columns: minmax(100px, .8fr) repeat(24, minmax(8px, 1fr)); gap: 3px; align-items: center; }
 .matrix .model-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
-.matrix i { aspect-ratio: 1; background: color-mix(in srgb, var(--accent) calc(var(--level) * 14%), transparent); border: 1px solid var(--line); }
+.matrix-hour { color: var(--muted); text-align: center; font: 9px ui-monospace, monospace; }
+.matrix i { display: block; width: 100%; aspect-ratio: 1; background: color-mix(in srgb, var(--ink) calc(var(--level) * 13%), transparent); border: 1px solid var(--line); }
 .fact-tags { align-self: center; display: flex; flex-wrap: wrap; gap: 14px; }
 .fact-tags span { padding: 12px 0; margin-right: 24px; border-bottom: 3px solid currentColor; font-size: clamp(22px, 3vw, 44px); font-weight: 750; }
 .rail { position: fixed; z-index: 20; right: 18px; top: 50%; transform: translateY(-50%); display: grid; justify-items: center; gap: 10px; color: var(--muted); mix-blend-mode: difference; }
@@ -99,8 +101,8 @@ h2 { margin-bottom: 0; font-size: clamp(32px, 5vw, 74px); line-height: 1; letter
   h1 { font-size: clamp(46px, 16vw, 78px); }
   .hero-number { font-size: clamp(76px, 28vw, 150px); }
   .calendar { --columns: 7 !important; }
-  .matrix { grid-template-columns: minmax(76px, .8fr) repeat(12, minmax(6px, 1fr)); }
-  .matrix i:nth-of-type(n+13) { display: none; }
+  .matrix-head, .matrix-row { grid-template-columns: minmax(76px, .8fr) repeat(12, minmax(6px, 1fr)); }
+  .matrix .odd-hour { display: none; }
   .rail { right: 7px; }
   .rank { grid-template-columns: 30px minmax(0, 1fr) auto; }
   .prompt-records, .word-stage { grid-template-columns: 1fr; }
