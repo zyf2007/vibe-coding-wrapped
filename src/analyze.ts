@@ -1,21 +1,24 @@
-import type { Bundle, FactSet, Scope } from "./types.js";
+import type { Bundle, FactSet, PromptFact, Scope } from "./types.js";
 import { activeMinute, codingDay, enumerateDays, localDateTime, zonedParts } from "./time.js";
 import { analyzeGit } from "./git.js";
+import { DEFAULT_STOPWORDS, STOPWORD_VERSION } from "./stopwords.js";
 import { displayProject, median, metric, percentile, redactText, sortObject, stableId, unavailable } from "./utils.js";
 
-const stopwords = new Set(["the", "and", "for", "with", "this", "that", "from", "into", "then", "请", "一下", "这个", "一个", "可以", "需要", "现在", "还是", "什么", "怎么", "我们", "你", "我", "的", "了", "是", "在", "把", "有", "要", "不", "就", "吗", "吧", "呢"]);
 const segmenters = new Map<string, Intl.Segmenter>();
 
-function tokensOf(text: string): string[] {
+function tokensOf(text: string, excludedWords: Set<string>): string[] {
   let segmenter = segmenters.get("words");
   if (!segmenter) {
     segmenter = new Intl.Segmenter("zh-CN", { granularity: "word" });
     segmenters.set("words", segmenter);
   }
   const result: string[] = [];
-  for (const part of segmenter.segment(text.normalize("NFKC"))) {
+  const source = text.normalize("NFKC")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/(?:^|\s)(?:\/?[A-Za-z0-9_.-]+[/\\]){2,}[A-Za-z0-9_.-]*/g, " ");
+  for (const part of segmenter.segment(source)) {
     const token = part.segment.toLowerCase().trim();
-    if (!part.isWordLike || token.length < 2 || token.length > 40 || stopwords.has(token) || /^\d+$/.test(token) || /^(?:https?:|[/\\])/.test(token)) continue;
+    if (!part.isWordLike || token.length < 2 || token.length > 40 || excludedWords.has(token) || /^\d+$/.test(token) || /^(?:https?:|[/\\])/.test(token)) continue;
     result.push(token);
   }
   return result;
@@ -33,6 +36,56 @@ function excerpt(text: string, scope: Scope): string | undefined {
   if (scope.privacy === "metrics-only") return undefined;
   const safe = scope.privacy === "redacted" ? redactText(text) : text.replace(/\s+/g, " ").trim();
   return safe.length > 180 ? `${safe.slice(0, 177)}...` : safe;
+}
+
+function excerptAroundTerm(text: string, term: string, scope: Scope): string | undefined {
+  if (scope.privacy === "metrics-only") return undefined;
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const index = normalized.toLowerCase().indexOf(term.toLowerCase());
+  const start = Math.max(0, index < 0 ? 0 : index - 70);
+  const end = Math.min(normalized.length, (index < 0 ? 0 : index + term.length) + 110);
+  const clipped = `${start > 0 ? "..." : ""}${normalized.slice(start, end)}${end < normalized.length ? "..." : ""}`;
+  return scope.privacy === "redacted" ? redactText(clipped) : clipped;
+}
+
+function promptRecord(kind: string, prompt: PromptFact, scope: Scope, score?: number, signals: string[] = []): Record<string, unknown> {
+  return {
+    kind,
+    occurredAt: prompt.occurredAt,
+    localDateTime: localDateTime(prompt.occurredAt, scope.timezone),
+    codingDay: codingDay(prompt.occurredAt, scope.timezone, scope.dayStartHour),
+    projectId: projectId(prompt.cwd),
+    modelId: modelId(prompt.modelId),
+    charCount: [...prompt.text].length,
+    excerpt: excerpt(prompt.text, scope),
+    ...(score === undefined ? {} : { score }),
+    ...(signals.length ? { signals } : {}),
+  };
+}
+
+function sentencesOf(text: string): string[] {
+  return text
+    .replace(/```[\s\S]*?```/g, " ")
+    .split(/[\n。！？!?；;]+/)
+    .map((sentence) => sentence.normalize("NFKC").replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").replace(/\s+/g, " ").trim())
+    .filter((sentence) => {
+      const length = [...sentence].length;
+      const chineseCharacters = sentence.match(/\p{Script=Han}/gu)?.length ?? 0;
+      const englishWords = sentence.match(/[A-Za-z]{2,}/g)?.length ?? 0;
+      return length >= 8 && length <= 100
+        && !/<[^>]+>/.test(sentence)
+        && !/https?:\/\//i.test(sentence)
+        && !/[{}\[\]]/.test(sentence)
+        && !/["']\s*:/.test(sentence)
+        && !/^[>$❯]/.test(sentence)
+        && (chineseCharacters >= 4 || englishWords >= 4);
+    });
+}
+
+function isMemoryFriendly(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed || sentencesOf(trimmed).length === 0) return false;
+  return !/^(?:[>$❯]|\w+\.(?:js|ts|tsx|jsx|go|rs|py|java|kt):\d+|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}|(?:uncaught\s+)?(?:error|exception|traceback)\b)/i.test(trimmed);
 }
 
 function countBy<T>(items: T[], key: (item: T) => string): Record<string, number> {
@@ -91,23 +144,90 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
   };
 
   const lengths = facts.prompts.map((item) => [...item.text].length);
-  const promptTerms = new Map<string, { count: number; prompts: Set<string> }>();
+  const excludedWords = new Set([...DEFAULT_STOPWORDS, ...(scope.excludedWords ?? [])]);
+  const promptTerms = new Map<string, { count: number; prompts: Set<string>; occurrences: Map<string, number> }>();
+  const promptTokenCounts = new Map<string, Map<string, number>>();
+  const promptSignals = new Map<string, Record<string, boolean>>();
+  const repeatedSentences = new Map<string, { sentence: string; promptIds: Set<string>; firstPrompt: PromptFact }>();
   const structureCounts: Record<string, number> = { list: 0, codeBlock: 0, path: 0, log: 0, attachment: 0 };
   const languageCounts: Record<string, number> = { zh: 0, en: 0, mixed: 0 };
   for (const prompt of facts.prompts) {
-    const flags = { list: /(?:^|\n)\s*(?:[-*]|\d+[.)])\s/m.test(prompt.text), codeBlock: /```/.test(prompt.text), path: /(?:^|\s)(?:\.?\.?\/|~\/|[A-Za-z]:\\)[^\s]+/.test(prompt.text), log: /(?:error|exception|traceback|报错|日志)/i.test(prompt.text), attachment: /<image|attachment|截图|图片/i.test(prompt.text) };
+    const flags = { list: /(?:^|\n)\s*(?:[-*]|\d+[.)])\s/m.test(prompt.text), codeBlock: /```/.test(prompt.text), path: /(?:^|\s)(?:\.?\.?\/|~\/|[A-Za-z]:\\)[^\s]+/.test(prompt.text), log: /(?:error|exception|traceback|报错|日志)|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.*\b(?:info|warn|error|debug)\b/i.test(prompt.text), attachment: /<image|attachment|截图|图片/i.test(prompt.text) };
+    promptSignals.set(prompt.id, flags);
     for (const [key, value] of Object.entries(flags)) if (value) structureCounts[key] += 1;
     const hasZh = /\p{Script=Han}/u.test(prompt.text);
     const hasEn = /[A-Za-z]{2}/.test(prompt.text);
     languageCounts[hasZh && hasEn ? "mixed" : hasZh ? "zh" : "en"] += 1;
-    for (const term of new Set(tokensOf(prompt.text))) {
-      const value = promptTerms.get(term) ?? { count: 0, prompts: new Set<string>() };
-      value.count += tokensOf(prompt.text).filter((item) => item === term).length;
+    const tokenCounts = countBy(tokensOf(prompt.text, excludedWords), (token) => token);
+    promptTokenCounts.set(prompt.id, new Map(Object.entries(tokenCounts)));
+    for (const [term, occurrences] of Object.entries(tokenCounts)) {
+      const value = promptTerms.get(term) ?? { count: 0, prompts: new Set<string>(), occurrences: new Map<string, number>() };
+      value.count += occurrences;
       value.prompts.add(prompt.id);
+      value.occurrences.set(prompt.id, occurrences);
       promptTerms.set(term, value);
+    }
+    for (const sentence of new Set(sentencesOf(prompt.text))) {
+      const normalized = sentence.toLowerCase();
+      const value = repeatedSentences.get(normalized) ?? { sentence, promptIds: new Set<string>(), firstPrompt: prompt };
+      value.promptIds.add(prompt.id);
+      repeatedSentences.set(normalized, value);
     }
   }
   const frequentTerms = [...promptTerms.entries()].map(([term, value]) => ({ term, count: value.count, promptCount: value.prompts.size })).sort((a, b) => b.count - a.count || b.promptCount - a.promptCount || a.term.localeCompare(b.term)).slice(0, 100).map((item, rank) => ({ rank: rank + 1, ...item }));
+  const promptById = new Map(facts.prompts.map((prompt) => [prompt.id, prompt]));
+  const keywordContexts = frequentTerms.slice(0, 20).flatMap((term) => {
+    const source = promptTerms.get(term.term);
+    if (!source) return [];
+    const contextScore = ([promptId, occurrences]: [string, number]) => {
+      const prompt = promptById.get(promptId);
+      if (!prompt) return 0;
+      const logPenalty = promptSignals.get(promptId)?.log ? 0.25 : 1;
+      return occurrences / Math.sqrt(Math.max(1, [...prompt.text].length)) * logPenalty;
+    };
+    const allOccurrences = [...source.occurrences.entries()];
+    const nonLogOccurrences = allOccurrences.filter(([promptId]) => !promptSignals.get(promptId)?.log);
+    const best = (nonLogOccurrences.length ? nonLogOccurrences : allOccurrences)
+      .sort((a, b) => contextScore(b) - contextScore(a) || b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+    const prompt = best ? promptById.get(best[0]) : undefined;
+    return prompt ? [{ term: term.term, count: term.count, promptCount: term.promptCount, termOccurrences: best[1], representative: { ...promptRecord("keyword_context", prompt, scope), excerpt: excerptAroundTerm(prompt.text, term.term, scope) } }] : [];
+  });
+  const keySentences = [...repeatedSentences.values()]
+    .filter((item) => item.promptIds.size >= 2)
+    .sort((a, b) => b.promptIds.size - a.promptIds.size || [...b.sentence].length - [...a.sentence].length || a.sentence.localeCompare(b.sentence))
+    .slice(0, 20)
+    .map((item, rank) => ({
+      rank: rank + 1,
+      promptCount: item.promptIds.size,
+      charCount: [...item.sentence].length,
+      sentence: scope.privacy === "metrics-only" ? undefined : scope.privacy === "redacted" ? redactText(item.sentence) : item.sentence,
+      firstSeenAt: item.firstPrompt.occurredAt,
+      projectId: projectId(item.firstPrompt.cwd),
+    }));
+  const topTerms = new Set(frequentTerms.slice(0, 20).map((item) => item.term));
+  const candidates = facts.prompts.map((prompt) => {
+    const signals = promptSignals.get(prompt.id) ?? {};
+    const signalNames = Object.entries(signals).filter(([, present]) => present).map(([name]) => name);
+    const structuredScore = signalNames.length;
+    const contextScore = Number(signals.path ?? false) * 2 + Number(signals.log ?? false) * 2 + Number(signals.attachment ?? false) * 2 + Number(signals.codeBlock ?? false) + Number(signals.list ?? false);
+    const termCounts = promptTokenCounts.get(prompt.id) ?? new Map<string, number>();
+    const keywordScore = [...termCounts.entries()].reduce((sum, [term, count]) => sum + (topTerms.has(term) ? count : 0), 0);
+    return { prompt, signalNames, structuredScore, contextScore, keywordScore, charCount: [...prompt.text].length, memoryFriendly: isMemoryFriendly(prompt.text) };
+  });
+  const notable: Array<Record<string, unknown>> = [];
+  const usedPromptIds = new Set<string>();
+  const selectNotable = (kind: string, scoreKey: "charCount" | "structuredScore" | "contextScore" | "keywordScore") => {
+    const rankedCandidates = [...candidates].sort((a, b) => b[scoreKey] - a[scoreKey] || b.charCount - a.charCount || a.prompt.id.localeCompare(b.prompt.id));
+    const selected = rankedCandidates.find((item) => !usedPromptIds.has(item.prompt.id) && item[scoreKey] > 0 && item.memoryFriendly)
+      ?? rankedCandidates.find((item) => !usedPromptIds.has(item.prompt.id) && item[scoreKey] > 0);
+    if (!selected) return;
+    usedPromptIds.add(selected.prompt.id);
+    notable.push(promptRecord(kind, selected.prompt, scope, selected[scoreKey], selected.signalNames));
+  };
+  selectNotable("longest", "charCount");
+  selectNotable("most_structured", "structuredScore");
+  selectNotable("most_context_rich", "contextScore");
+  selectNotable("keyword_dense", "keywordScore");
   const promptsByModel = Object.entries(countBy(facts.prompts, (item) => modelId(item.modelId))).map(([id, count]) => ({ modelId: id, prompts: count, medianChars: median(facts.prompts.filter((item) => modelId(item.modelId) === id).map((item) => [...item.text].length)) })).sort((a, b) => b.prompts - a.prompts || a.modelId.localeCompare(b.modelId));
   const firstPrompt = facts.prompts[0];
   const prompts = {
@@ -116,7 +236,15 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
     structure: metric("prompts.structure", Object.fromEntries(Object.entries(structureCounts).map(([key, count]) => [key, { count, rate: facts.prompts.length ? count / facts.prompts.length : 0 }])), facts.prompts.length, 1),
     contextSignals: metric("prompts.context_signals", { path: structureCounts.path, log: structureCounts.log, attachment: structureCounts.attachment }, facts.prompts.length, 1),
     languageMix: metric("prompts.language_mix", languageCounts, facts.prompts.length, 1),
-    terms: { frequent: metric("prompts.frequent_terms", frequentTerms, facts.prompts.length, 1), languageGroups: ["all"], stopwordVersion: "v1" },
+    notable: metric("prompts.notable", notable, facts.prompts.length, 1),
+    keySentences: metric("prompts.key_sentences", keySentences, facts.prompts.length, 1),
+    terms: {
+      frequent: metric("prompts.frequent_terms", frequentTerms, facts.prompts.length, 1),
+      keywordContexts: metric("prompts.keyword_contexts", keywordContexts, facts.prompts.length, 1),
+      languageGroups: ["all"],
+      stopwordVersion: STOPWORD_VERSION,
+      customExcludedWords: [...new Set(scope.excludedWords ?? [])].sort(),
+    },
     sessionDepth: metric("prompts.session_depth", { median: median(Object.values(countBy(facts.prompts, (item) => item.sessionId))), p90: percentile(Object.values(countBy(facts.prompts, (item) => item.sessionId)), 0.9) }, facts.sessions.length, 1),
     byModel: promptsByModel,
   };
@@ -234,13 +362,42 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
   const busiest = [...calendarDays].sort((a, b) => b.prompts - a.prompts || b.totalTokens - a.totalTokens || a.codingDay.localeCompare(b.codingDay))[0];
   let longestStreak = { days: 0, start: "", end: "" }; let currentStreak = { days: 0, start: "", end: "" };
   for (const day of calendarDays) { if (day.prompts > 0) { if (!currentStreak.days) currentStreak.start = day.codingDay; currentStreak.days += 1; currentStreak.end = day.codingDay; if (currentStreak.days > longestStreak.days) longestStreak = { ...currentStreak }; } else currentStreak = { days: 0, start: "", end: "" }; }
+  const promptsByCodingDay = new Map<string, PromptFact[]>();
+  for (const prompt of facts.prompts) {
+    const day = codingDay(prompt.occurredAt, scope.timezone, scope.dayStartHour);
+    const list = promptsByCodingDay.get(day) ?? [];
+    list.push(prompt);
+    promptsByCodingDay.set(day, list);
+  }
+  const busiestPrompts = busiest ? promptsByCodingDay.get(busiest.codingDay) ?? [] : [];
+  let longestGap: { days: number; from: string; to: string; returnPrompt: PromptFact } | undefined;
+  for (let index = 1; index < activeDays.length; index += 1) {
+    const previous = activeDays[index - 1].codingDay;
+    const next = activeDays[index].codingDay;
+    const days = Math.round((Date.parse(`${next}T00:00:00Z`) - Date.parse(`${previous}T00:00:00Z`)) / 86_400_000) - 1;
+    const returnPrompt = promptsByCodingDay.get(next)?.[0];
+    if (returnPrompt && days > 0 && (!longestGap || days > longestGap.days)) longestGap = { days, from: previous, to: next, returnPrompt };
+  }
+  const memoryMoments: Array<Record<string, unknown>> = [];
+  const addMoment = (kind: string, prompt: PromptFact | undefined, extra: Record<string, unknown> = {}) => {
+    if (prompt) memoryMoments.push({ ...promptRecord(kind, prompt, scope), ...extra });
+  };
+  addMoment("period_first", facts.prompts[0]);
+  addMoment("earliest_start", earliest?.item, { activeMinute: earliest?.minute });
+  addMoment("latest_night", latest?.item, { activeMinute: latest?.minute });
+  addMoment("busiest_day_first", busiestPrompts[0], { busiestCodingDay: busiest?.codingDay });
+  addMoment("busiest_day_last", busiestPrompts.at(-1), { busiestCodingDay: busiest?.codingDay });
+  addMoment("return_after_gap", longestGap?.returnPrompt, { gapDays: longestGap?.days, previousActiveDay: longestGap?.from });
+  addMoment("period_last", facts.prompts.at(-1));
   const records = {
     earliestActivity: earliest ? metric("records.earliest_activity", { occurredAt: earliest.item.occurredAt, localDateTime: localDateTime(earliest.item.occurredAt, scope.timezone), codingDay: codingDay(earliest.item.occurredAt, scope.timezone, scope.dayStartHour), activeMinute: earliest.minute, excerpt: excerpt(earliest.item.text, scope) }, facts.prompts.length, 1, "direct") : unavailable("records.earliest_activity", "insufficient_data", "no_prompts"),
     latestActivity: latest ? metric("records.latest_activity", { occurredAt: latest.item.occurredAt, localDateTime: localDateTime(latest.item.occurredAt, scope.timezone), codingDay: codingDay(latest.item.occurredAt, scope.timezone, scope.dayStartHour), activeMinute: latest.minute, excerpt: excerpt(latest.item.text, scope) }, facts.prompts.length, 1, "direct") : unavailable("records.latest_activity", "insufficient_data", "no_prompts"),
     busiestDay: busiest ? metric("records.busiest_day", busiest, activeDays.length, 1) : unavailable("records.busiest_day", "insufficient_data", "no_active_days"),
+    busiestDayPrompts: busiestPrompts.length ? metric("records.busiest_day_prompts", { first: promptRecord("busiest_day_first", busiestPrompts[0], scope), last: promptRecord("busiest_day_last", busiestPrompts.at(-1)!, scope) }, busiestPrompts.length, 1, "direct") : unavailable("records.busiest_day_prompts", "insufficient_data", "no_busiest_day_prompts"),
     longestStreak: metric("records.longest_streak", longestStreak, activeDays.length, 1),
-    longestGap: unavailable("records.longest_gap", "unsupported", "not_implemented_v1"),
+    longestGap: longestGap ? metric("records.longest_gap", { days: longestGap.days, from: longestGap.from, to: longestGap.to, returnPrompt: promptRecord("return_after_gap", longestGap.returnPrompt, scope) }, activeDays.length, 1) : unavailable("records.longest_gap", "insufficient_data", "no_gap_between_active_days"),
     longestSession: unavailable("records.longest_session", "unsupported", "not_implemented_v1"),
+    memoryMoments: metric("records.memory_moments", memoryMoments, facts.prompts.length, 1, "direct"),
   };
 
   const git = await analyzeGit(facts, scope, gitEnabled);
@@ -261,7 +418,7 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
     sources: facts.sourceIds.map((id) => ({ sourceId: id, adapterId: "codex" })),
     coverage: { scannedFiles: facts.scannedFiles, scannedBytes: facts.scannedBytes, firstEventAt: facts.prompts[0]?.occurredAt, lastEventAt: facts.prompts.at(-1)?.occurredAt },
     diagnostics: { count: facts.diagnostics.length, byCode: sortObject(countBy(facts.diagnostics, (item) => item.code)) },
-    producers: { activity: { version: "1.0.0" }, prompts: { version: "1.0.0", tokenizer: "Intl.Segmenter" }, tools: { version: "1.0.0" }, code: { version: "1.0.0", languageMap: "builtin-v1" }, models: { version: "1.0.0" }, tokens: { version: "1.0.0" }, git: { version: "1.0.0" } },
+    producers: { activity: { version: "1.0.0" }, prompts: { version: "1.1.0", tokenizer: "Intl.Segmenter", stopwordVersion: STOPWORD_VERSION }, tools: { version: "1.0.0" }, code: { version: "1.0.0", languageMap: "builtin-v1" }, models: { version: "1.0.0" }, tokens: { version: "1.0.0" }, git: { version: "1.0.0" } },
     definitions,
     nodeStatus: { activity: "ok", prompts: "ok", projects: "ok", tools: "ok", code: "ok", models: "ok", tokens: "ok", git: git.availability },
   };

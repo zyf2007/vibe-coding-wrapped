@@ -10,6 +10,7 @@ export type Scope = {
   timezone: string;
   dayStartHour: number;
   privacy: "full" | "redacted" | "metrics-only";
+  excludedWords?: string[];
 };
 
 export type Evidence = "direct" | "structural_derived";

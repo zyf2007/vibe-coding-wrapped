@@ -270,14 +270,14 @@ type Metric<T> =
 | `manifest.json` | Bundle 身份、周期、能力、隐私和文件完整性 | `bundleSchemaVersion`、`report`、`privacy`、`capabilities`、`files[]` |
 | `overview.json` | 跨域总量和事实型亮点，不重新保存明细 | `totals`、`averages`、`featuredFacts[]`、`availableSections[]` |
 | `activity.json` | 以 coding day 为准的时间分布 | `calendar.days[]`、`byHour[]`、`byWeekday[]`、`periodBuckets[]`、`dayTimelines{}` |
-| `prompts.json` | Prompt 自身可观察文本特征 | `firstInPeriod`、`length`、`structure`、`contextSignals`、`languageMix`、`terms`、`sessionDepth`、`byModel[]` |
+| `prompts.json` | Prompt 自身可观察文本特征 | `firstInPeriod`、`notable[]`、`keySentences[]`、`length`、`structure`、`contextSignals`、`languageMix`、`terms.frequent[]`、`terms.keywordContexts[]`、`sessionDepth`、`byModel[]` |
 | `projects.json` | 匿名项目身份及活动聚合 | `items[]`、`timeline[]`、`byDay{}`、`crossSourceMerges` |
 | `tools.json` | 工具调用、类别、可观察序列和结果覆盖 | `totals`、`categories[]`、`linkedPrompt`、`sequenceMotifs[]`、`postChangeChecks`、`outcomes`、`subagents`、`byModel[]` |
 | `code.json` | 结构化 patch/write 中可归因代码变化 | `totals`、`trend[]`、`attributionCoverage`、`changeRadius`、`languages[]`、`languageByProject[]`、`byModel[]` |
 | `models.json` | turn 级实际模型/effort 使用与相邻转换 | `items[]`、`byHour[]`、`byWeekday[]`、`byProject[]`、`efforts[]`、`transitions[]` |
 | `tokens.json` | 去重 Token 计量和趋势 | `totals`、`trend[]`、`byModel[]`、`byProject[]`、`cacheRatio`、`costEstimate` |
 | `git.json` | 独立 Git 历史与精确观察到的 commit 调用 | `availability`、`repositories[]`、`commitTrend[]`、`commitStats`、`languageStats[]`、`observedCommitCalls[]` |
-| `records.json` | 从其他 artifact 选择出的时间/规模纪录 | `earliestActivity`、`latestActivity`、`busiestDay`、`longestStreak`、`longestGap`、`longestSession` |
+| `records.json` | 从其他 artifact 选择出的时间/规模纪录和回忆节点 | `earliestActivity`、`latestActivity`、`busiestDay`、`busiestDayPrompts`、`longestStreak`、`longestGap`、`longestSession`、`memoryMoments[]` |
 | `provenance.json` | 来源覆盖、诊断、算法和指标定义索引 | `sources[]`、`coverage`、`diagnostics`、`producers{}`、`definitions{}`、`nodeStatus{}` |
 
 跨文件连接只使用稳定、非敏感键：`projectId` 连接项目，`modelId` 连接模型，`codingDay` 连接日历/Prompt/Token/Git 趋势，`definitionId` 连接数据说明。原始 cwd、设备路径、数组下标和页面编号都不能作为 join key。每个 `featuredFacts[]` 项必须是结构化引用，而不是分析器直接写好的宣传文案：
@@ -921,6 +921,8 @@ Prompt 指标：
 3. 中文、英文和中英混合比例，以及高频词和技术词。
 4. 每个 session 的 prompt 数、首条 prompt 长度和后续 prompt 数分布。
 5. Prompt 与 turn 成功关联时，对应 tool call 数量分布；必须同时输出 `linkedPromptCoverage`。
+6. 最长、结构元素最多、上下文信号最多和高频词最集中的代表性 Prompt；只展示可复现的选择规则和脱敏片段。
+7. 高频词对应的代表性 Prompt 片段，以及至少在两条 Prompt 中精确重复的关键句；不把它们解释为任务意图。
 
 工具指标：
 
@@ -1086,15 +1088,16 @@ type ReportPageDefinition = {
 ### 05 `peak-day`：最投入的一天
 
 - **主题**：把最忙 coding day 还原成一天的节奏。
-- **数据**：`records.busiestDay`、`activity.dayTimelines[dayId]`、`projects.byDay[dayId]`、`tools.categories[]`，可选按 `codingDay` 对齐 `git.commitTrend[]`。
+- **数据**：`records.busiestDay`、`records.busiestDayPrompts`、`activity.dayTimelines[dayId]`、`projects.byDay[dayId]`、`tools.categories[]`，可选按 `codingDay` 对齐 `git.commitTrend[]`。
 - **布局**：横向 24 小时时间轴为主视觉，prompt、tool、file change、commit 用不同形状而非仅靠颜色区分。
-- **文案**：展示首次/末次活动、主要项目和总量，不生成“生产力分数”。
+- **文案**：展示首次/末次活动、主要项目和总量，并引用这一天第一条和最后一条脱敏 Prompt，不生成“生产力分数”。
 
 ### 06 `clock`：最早与最晚
 
 - **主题**：凌晨 4 点换日后的真实作息纪录。
 - **数据**：`activity.byHour[]`、`records.earliestActivity`、`records.latestActivity`。
 - **布局**：一个从 04:00 开始的环形 24 小时时钟；两条引线指向最早/最晚可信纪录。
+- **回忆引用**：最早开工和最晚仍在输入的时间旁直接引用对应脱敏 Prompt；`metrics-only` 只显示字数。
 - **说明**：固定显示 timezone 和 dayStartHour；绝对纪录样本不足时只显示分布。
 
 ### 07 `rhythm`：星期与连续性
@@ -1102,6 +1105,7 @@ type ReportPageDefinition = {
 - **主题**：工作日、周末、连续活跃和空窗共同组成的节奏。
 - **数据**：`activity.byWeekday[]`、`activity.periodBuckets[]`、`records.longestStreak`、`records.longestGap`。
 - **布局**：桌面左侧星期条带，右侧连续天数阶梯；移动端上下排列。
+- **回忆引用**：存在周期内空窗时，展示最长空窗天数和回来后的第一条脱敏 Prompt。
 - **月/年差异**：年报显示月份小趋势，月报显示周次小趋势。
 
 ### 08 `prompt-style`：你如何提出需求
@@ -1171,8 +1175,8 @@ type ReportPageDefinition = {
 ### 17 `closing`：周期事实集
 
 - **主题**：用最有辨识度的直接事实收束，不生成性格、协作风格或能力画像。
-- **数据**：`overview.featuredFacts[]`、`overview.totals`、`records.*`、`code.languages[]`、`provenance.coverage`、`provenance.sources[]`、`provenance.diagnostics`。
-- **布局**：最多 3 个事实标签、4～6 个数字和一句中性结语；标签只能由可追溯规则生成，例如“凌晨活动 18 天”“TypeScript 可识别新增行最多”“最长连续活跃 12 天”。底部展示数据覆盖和隐私状态。
+- **数据**：`overview.featuredFacts[]`、`overview.totals`、`records.*`、`records.memoryMoments[]`、`code.languages[]`、`provenance.coverage`、`provenance.sources[]`、`provenance.diagnostics`。
+- **布局**：最多 3 个事实标签、4～6 个数字、周期最后一条脱敏 Prompt 和一句中性结语；标签只能由可追溯规则生成，例如“凌晨活动 18 天”“TypeScript 可识别新增行最多”“最长连续活跃 12 天”。底部展示数据覆盖和隐私状态。
 - **分享**：页面可提供仅用于截图/演示的视觉隐藏开关，但这不是安全边界，原始 JSON 仍在静态文件中。需要公开 host 时必须重新用 `redacted` 或 `metrics-only` bundle 构建。
 
 ### 9.3 JSON 消费完整性

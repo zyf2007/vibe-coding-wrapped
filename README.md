@@ -17,6 +17,8 @@ node dist/cli.js generate --month 2026-07 --out ./output/july-json
 node dist/cli.js render ./output/july-json --out ./output/july-site
 ```
 
+The built-in Chinese/English stopword list removes conversational filler from keyword statistics. Add personal exclusions with repeated options such as `--exclude-word 然后 --exclude-word 应该`.
+
 Use repeated `--codex-home PATH` arguments to merge logs copied from multiple devices. Events are deduplicated by stable content identity.
 
 Parsed report facts are cached under the platform cache directory using source file size/mtime fingerprints. An unchanged snapshot is reused without reopening JSONL contents; any changed session invalidates that snapshot.

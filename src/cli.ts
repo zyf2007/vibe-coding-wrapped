@@ -8,7 +8,7 @@ import { renderBundle } from "./render.js";
 import { createPeriod } from "./time.js";
 import type { Scope } from "./types.js";
 
-type Options = { year?: string; month?: string; timezone: string; dayStart: number; privacy: Scope["privacy"]; codexHomes: string[]; out?: string; git: boolean; positional: string[] };
+type Options = { year?: string; month?: string; timezone: string; dayStart: number; privacy: Scope["privacy"]; codexHomes: string[]; excludedWords: string[]; out?: string; git: boolean; positional: string[] };
 
 function usage(): never {
   console.error(`Usage:
@@ -16,14 +16,14 @@ function usage(): never {
   vibe-wrapped render BUNDLE_DIR --out DIR
   vibe-wrapped build (--year YYYY | --month YYYY-MM) [--codex-home PATH]... --out DIR
 
-Options: --timezone IANA --day-start 0..23 --privacy full|redacted|metrics-only --git off`);
+Options: --timezone IANA --day-start 0..23 --privacy full|redacted|metrics-only --exclude-word WORD --git off`);
   process.exit(2);
 }
 
 function parse(argv: string[]): { command: string; options: Options } {
   const command = argv[0];
   if (!command || !["generate", "render", "build"].includes(command)) usage();
-  const options: Options = { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", dayStart: 4, privacy: "redacted", codexHomes: [], git: true, positional: [] };
+  const options: Options = { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", dayStart: 4, privacy: "redacted", codexHomes: [], excludedWords: [], git: true, positional: [] };
   for (let index = 1; index < argv.length; index += 1) {
     const arg = argv[index];
     const next = () => argv[++index] ?? usage();
@@ -33,6 +33,7 @@ function parse(argv: string[]): { command: string; options: Options } {
     else if (arg === "--day-start") options.dayStart = Number(next());
     else if (arg === "--privacy") options.privacy = next() as Scope["privacy"];
     else if (arg === "--codex-home") options.codexHomes.push(resolve(next()));
+    else if (arg === "--exclude-word") options.excludedWords.push(next().normalize("NFKC").toLowerCase());
     else if (arg === "--out") options.out = resolve(next());
     else if (arg === "--git") options.git = next() !== "off";
     else if (arg.startsWith("-")) usage();
@@ -46,7 +47,7 @@ async function generate(options: Options, output: string): Promise<void> {
   if (!Number.isInteger(options.dayStart) || options.dayStart < 0 || options.dayStart > 23) usage();
   if (!["full", "redacted", "metrics-only"].includes(options.privacy)) usage();
   const period = options.year ? createPeriod("year", options.year) : createPeriod("month", options.month!);
-  const scope: Scope = { period, timezone: options.timezone, dayStartHour: options.dayStart, privacy: options.privacy };
+  const scope: Scope = { period, timezone: options.timezone, dayStartHour: options.dayStart, privacy: options.privacy, excludedWords: [...new Set(options.excludedWords)].sort() };
   const roots = options.codexHomes.length ? options.codexHomes : [process.env.CODEX_HOME ? resolve(process.env.CODEX_HOME) : join(homedir(), ".codex")];
   const facts = await readCodexFacts(roots, scope, (message) => console.error(message));
   console.error(`Parsed ${facts.prompts.length} prompts, ${facts.turns.length} turns, ${facts.tools.length} tool calls and ${facts.tokens.length} token events.`);

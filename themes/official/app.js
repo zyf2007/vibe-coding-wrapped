@@ -35,6 +35,16 @@ function metricRow(items) {
   return row;
 }
 
+function memoryQuotes(items) {
+  const quotes = node("div", "memory-quotes");
+  items.filter((item) => item?.record).forEach((item) => {
+    const quote = node("article");
+    append(quote, node("p", "kicker", item.label), node("blockquote", "", item.record.excerpt || `${item.record.charCount} 字 Prompt`), node("small", "", dateText(item.record.localDateTime)));
+    quotes.append(quote);
+  });
+  return quotes;
+}
+
 function ranked(items, nameKey, valueKey, limit = 8) {
   const list = node("div", "rank-list");
   items.slice(0, limit).forEach((item, index) => {
@@ -82,27 +92,38 @@ function peakDay(bundle) {
   const root = page("peak-day", "TIME / 02", "最投入的一天"); const busiest = value(bundle.records.busiestDay); if (!busiest) { root.append(node("p", "empty", "数据不足")); return root; }
   const events = bundle.activity.dayTimelines[busiest.codingDay] || []; const hours = Array.from({ length: 24 }, () => 0); events.forEach((event) => { const hour = Number(event.at.split("T")[1]?.slice(0, 2)); if (Number.isFinite(hour)) hours[hour] += 1; }); const max = Math.max(1, ...hours);
   const timeline = node("div", "timeline"); hours.forEach((count) => { const bar = node("i"); bar.style.setProperty("--value", String(Math.max(1, count / max * 100))); timeline.append(bar); });
-  root.append(timeline, metricRow([["日期", busiest.codingDay], ["提示词", busiest.prompts], ["工具调用", busiest.toolCalls], ["Token", busiest.totalTokens]])); return root;
+  const dayPrompts = value(bundle.records.busiestDayPrompts, {});
+  root.append(timeline, metricRow([["日期", busiest.codingDay], ["提示词", busiest.prompts], ["工具调用", busiest.toolCalls], ["Token", busiest.totalTokens]]), memoryQuotes([{ label: "这一天从这里开始", record: dayPrompts.first }, { label: "这一天停在这里", record: dayPrompts.last }])); return root;
 }
 
 function clock(bundle) {
   const root = page("clock", "TIME / 03", "你的 24 小时", "dark"); const hours = value(bundle.activity.byHour, []); const max = Math.max(1, ...hours.map((item) => item.prompts)); const bars = node("div", "bars");
   hours.forEach((item) => { const wrap = node("div"); const bar = node("i"); bar.style.setProperty("--value", String(Math.max(1, item.prompts / max * 100))); wrap.append(bar); if (item.hour % 4 === 0) wrap.append(node("small", "", String(item.hour).padStart(2, "0"))); bars.append(wrap); });
-  root.append(bars); const earliest = value(bundle.records.earliestActivity); const latest = value(bundle.records.latestActivity); foot(root, `最早 ${dateText(earliest?.localDateTime)} · 最晚 ${dateText(latest?.localDateTime)}`, bundle); return root;
+  const earliest = value(bundle.records.earliestActivity); const latest = value(bundle.records.latestActivity); root.append(bars, memoryQuotes([{ label: `最早 ${earliest?.localDateTime?.slice(11) || "--"} 开始`, record: earliest }, { label: `最晚 ${latest?.localDateTime?.slice(11) || "--"} 还在输入`, record: latest }])); foot(root, `最早 ${dateText(earliest?.localDateTime)} · 最晚 ${dateText(latest?.localDateTime)}`, bundle); return root;
 }
 
 function rhythm(bundle) {
-  const root = page("rhythm", "TIME / 04", "星期与连续性", "yellow"); const weekdays = value(bundle.activity.byWeekday, []); root.append(ranked(weekdays.sort((a,b) => b.prompts-a.prompts), "weekday", "prompts", 7)); const streak = value(bundle.records.longestStreak, {}); foot(root, `最长连续活跃 ${streak.days || 0} 天 · ${streak.start || "--"} 至 ${streak.end || "--"}`, bundle); return root;
+  const root = page("rhythm", "TIME / 04", "星期与连续性", "yellow"); const weekdays = value(bundle.activity.byWeekday, []); root.append(ranked(weekdays.sort((a,b) => b.prompts-a.prompts), "weekday", "prompts", 7)); const streak = value(bundle.records.longestStreak, {}); const gap = value(bundle.records.longestGap); if (gap) root.append(memoryQuotes([{ label: `沉寂 ${gap.days} 天后，你从这句话回来`, record: gap.returnPrompt }])); foot(root, `最长连续活跃 ${streak.days || 0} 天 · ${streak.start || "--"} 至 ${streak.end || "--"}`, bundle); return root;
 }
 
 function promptStyle(bundle) {
   const root = page("prompt-style", "EXPRESSION / 01", "你如何写 Prompt"); const length = value(bundle.prompts.length, {}); const structure = value(bundle.prompts.structure, {}); const languages = value(bundle.prompts.languageMix, {});
   root.append(metricRow([["中位字数", length.median], ["P90 字数", length.p90], ["含列表", percent(structure.list?.rate)], ["含代码块", percent(structure.codeBlock?.rate)], ["中英混合", languages.mixed]]));
+  const labels = { longest: "最长 Prompt", most_structured: "结构最丰富", most_context_rich: "上下文最丰富", keyword_dense: "高频词最集中" };
+  const records = node("div", "prompt-records");
+  value(bundle.prompts.notable, []).forEach((item) => { const record = node("article", "prompt-record"); append(record, node("p", "kicker", labels[item.kind] || item.kind), node("p", "prompt-excerpt", item.excerpt || `${item.charCount} 字`), node("small", "", `${dateText(item.localDateTime)} · ${item.charCount} 字`)); records.append(record); });
+  root.append(records);
   foot(root, "仅统计长度、结构与上下文信号，不评价 Prompt 好坏", bundle); return root;
 }
 
 function words(bundle) {
-  const root = page("words", "EXPRESSION / 02", "你最常说的话", "yellow"); const terms = value(bundle.prompts.terms.frequent, []).slice(0, 32); const max = Math.max(1, ...terms.map((item) => item.count)); const cloud = node("div", "words"); terms.forEach((item) => { const word = node("span", "", item.term); word.style.setProperty("--weight", String(Math.max(1, Math.round(item.count / max * 8)))); word.title = `${item.count} 次 · ${item.promptCount} 条 Prompt`; cloud.append(word); }); root.append(cloud); foot(root, `${terms.length} 个高频词 · Intl.Segmenter / stopwords v1`, bundle); return root;
+  const root = page("words", "EXPRESSION / 02", "你最常说的话", "yellow"); const terms = value(bundle.prompts.terms.frequent, []).slice(0, 32); const contexts = value(bundle.prompts.terms.keywordContexts, []); const contextByTerm = new Map(contexts.map((item) => [item.term, item])); const max = Math.max(1, ...terms.map((item) => item.count));
+  const stage = node("div", "word-stage"); const cloud = node("div", "words"); const detail = node("aside", "word-context");
+  const showContext = (term) => { const item = contextByTerm.get(term); detail.replaceChildren(); append(detail, node("p", "kicker", `关键词原文 · ${term}`), node("blockquote", "", item?.representative?.excerpt || "当前隐私模式不包含原文"), node("small", "", item ? `${item.count} 次 · 出现在 ${item.promptCount} 条 Prompt · ${dateText(item.representative.localDateTime)}` : "暂无代表片段")); };
+  terms.forEach((item, index) => { const word = node("button", "", item.term); word.style.setProperty("--weight", String(Math.max(1, Math.round(item.count / max * 8)))); word.title = `${item.count} 次 · ${item.promptCount} 条 Prompt`; word.addEventListener("click", () => showContext(item.term)); cloud.append(word); if (index === 0) showContext(item.term); });
+  append(stage, cloud, detail); root.append(stage);
+  const sentences = value(bundle.prompts.keySentences, []).slice(0, 3); if (sentences.length) { const repeated = node("div", "sentence-strip"); sentences.forEach((item) => append(repeated, node("span", "", `“${item.sentence || `${item.charCount} 字句子`}” × ${item.promptCount}`))); root.append(repeated); }
+  const customExcludedCount = (bundle.prompts.terms.customExcludedWords || []).length; foot(root, `${terms.length} 个高频词 · ${bundle.prompts.terms.stopwordVersion}${customExcludedCount ? ` · 自定义排除 ${customExcludedCount} 个` : ""}`, bundle); return root;
 }
 
 function projects(bundle) {
@@ -137,7 +158,7 @@ function gitPulse(bundle) {
 
 function closing(bundle) {
   const root = page("closing", "CLOSING", "这就是你的周期事实", "yellow"); const totals = value(bundle.overview.totals, {}); const streak = value(bundle.records.longestStreak, {}); const topLanguage = value(bundle.code.languages, [])[0]; const latest = value(bundle.records.latestActivity); const tags = node("div", "fact-tags");
-  [ `${totals.activeDays || 0} 个活跃日`, `连续 ${streak.days || 0} 天`, topLanguage ? `${topLanguage.language} 新增行最多` : null, latest ? `最晚 ${latest.localDateTime.slice(11)} 仍在输入` : null ].filter(Boolean).forEach((text) => tags.append(node("span", "", text))); root.append(tags); foot(root, `${bundle.provenance.coverage.scannedFiles} 个日志文件 · ${bundle.manifest.privacy.mode} privacy`, bundle); return root;
+  [ `${totals.activeDays || 0} 个活跃日`, `连续 ${streak.days || 0} 天`, topLanguage ? `${topLanguage.language} 新增行最多` : null, latest ? `最晚 ${latest.localDateTime.slice(11)} 仍在输入` : null ].filter(Boolean).forEach((text) => tags.append(node("span", "", text))); const lastPrompt = value(bundle.records.memoryMoments, []).find((item) => item.kind === "period_last"); root.append(tags, memoryQuotes([{ label: "这个周期最后停在这里", record: lastPrompt }])); foot(root, `${bundle.provenance.coverage.scannedFiles} 个日志文件 · ${bundle.manifest.privacy.mode} privacy`, bundle); return root;
 }
 
 async function load() {
