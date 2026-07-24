@@ -56,6 +56,7 @@ function promptRecord(kind: string, prompt: PromptFact, scope: Scope, score?: nu
     localDateTime: localDateTime(prompt.occurredAt, scope.timezone),
     codingDay: codingDay(prompt.occurredAt, scope.timezone, scope.dayStartHour),
     projectId: projectId(prompt.cwd),
+    projectName: displayProject(prompt.cwd),
     modelId: modelId(prompt.modelId),
     charCount: [...prompt.text].length,
     excerpt: excerpt(prompt.text, scope),
@@ -234,7 +235,7 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
   const promptsByModel = [...context.promptsByModel.entries()].map(([id, items]) => ({ modelId: id, prompts: items.length, medianChars: median(items.map((item) => [...item.text].length)) })).sort((a, b) => b.prompts - a.prompts || a.modelId.localeCompare(b.modelId));
   const firstPrompt = facts.prompts[0];
   const prompts = {
-    firstInPeriod: firstPrompt ? metric("prompts.first_in_period", { occurredAt: firstPrompt.occurredAt, localDateTime: localDateTime(firstPrompt.occurredAt, scope.timezone), codingDay: codingDay(firstPrompt.occurredAt, scope.timezone, scope.dayStartHour), excerpt: excerpt(firstPrompt.text, scope), charCount: [...firstPrompt.text].length, projectId: projectId(firstPrompt.cwd) }, 1, 1, "direct") : unavailable("prompts.first_in_period", "insufficient_data", "no_prompts"),
+    firstInPeriod: firstPrompt ? metric("prompts.first_in_period", promptRecord("period_first", firstPrompt, scope), 1, 1, "direct") : unavailable("prompts.first_in_period", "insufficient_data", "no_prompts"),
     length: metric("prompts.length", { median: median(lengths), p90: percentile(lengths, 0.9), max: Math.max(0, ...lengths) }, lengths.length, 1),
     structure: metric("prompts.structure", Object.fromEntries(Object.entries(structureCounts).map(([key, count]) => [key, { count, rate: facts.prompts.length ? count / facts.prompts.length : 0 }])), facts.prompts.length, 1),
     contextSignals: metric("prompts.context_signals", { path: structureCounts.path, log: structureCounts.log, attachment: structureCounts.attachment }, facts.prompts.length, 1),
@@ -398,8 +399,8 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
   addMoment("return_after_gap", longestGap?.returnPrompt, { gapDays: longestGap?.days, previousActiveDay: longestGap?.from });
   addMoment("period_last", facts.prompts.at(-1));
   const records = {
-    earliestActivity: earliest ? metric("records.earliest_activity", { occurredAt: earliest.item.occurredAt, localDateTime: localDateTime(earliest.item.occurredAt, scope.timezone), codingDay: codingDay(earliest.item.occurredAt, scope.timezone, scope.dayStartHour), activeMinute: earliest.minute, excerpt: excerpt(earliest.item.text, scope) }, facts.prompts.length, 1, "direct") : unavailable("records.earliest_activity", "insufficient_data", "no_prompts"),
-    latestActivity: latest ? metric("records.latest_activity", { occurredAt: latest.item.occurredAt, localDateTime: localDateTime(latest.item.occurredAt, scope.timezone), codingDay: codingDay(latest.item.occurredAt, scope.timezone, scope.dayStartHour), activeMinute: latest.minute, excerpt: excerpt(latest.item.text, scope) }, facts.prompts.length, 1, "direct") : unavailable("records.latest_activity", "insufficient_data", "no_prompts"),
+    earliestActivity: earliest ? metric("records.earliest_activity", { ...promptRecord("earliest_start", earliest.item, scope), activeMinute: earliest.minute }, facts.prompts.length, 1, "direct") : unavailable("records.earliest_activity", "insufficient_data", "no_prompts"),
+    latestActivity: latest ? metric("records.latest_activity", { ...promptRecord("latest_night", latest.item, scope), activeMinute: latest.minute }, facts.prompts.length, 1, "direct") : unavailable("records.latest_activity", "insufficient_data", "no_prompts"),
     busiestDay: busiest ? metric("records.busiest_day", busiest, activeDays.length, 1) : unavailable("records.busiest_day", "insufficient_data", "no_active_days"),
     busiestDayPrompts: busiestPrompts.length ? metric("records.busiest_day_prompts", { first: promptRecord("busiest_day_first", busiestPrompts[0], scope), last: promptRecord("busiest_day_last", busiestPrompts.at(-1)!, scope) }, busiestPrompts.length, 1, "direct") : unavailable("records.busiest_day_prompts", "insufficient_data", "no_busiest_day_prompts"),
     longestStreak: metric("records.longest_streak", longestStreak, activeDays.length, 1),

@@ -15,6 +15,20 @@ function tokenAmount(value, total = false) {
   return root;
 }
 function dateText(value) { if (!value) return "--"; const [date, time] = value.split("T"); return `${date.slice(5).replace("-", "月")}日 ${time || ""}`; }
+function promptSource(record) { return `目录 ${record?.projectName || "未知"} · 模型 ${record?.modelId && record.modelId !== "unknown" ? record.modelId : "未知"}`; }
+function tooltipFor(target, text) {
+  const tooltip = document.querySelector("#tooltip"); tooltip.textContent = text; tooltip.hidden = false;
+  const box = target.getBoundingClientRect(); const own = tooltip.getBoundingClientRect();
+  tooltip.style.left = `${Math.max(12, Math.min(innerWidth - own.width - 12, box.left + box.width / 2 - own.width / 2))}px`;
+  tooltip.style.top = `${Math.max(12, box.top - own.height - 8)}px`;
+}
+function hideTooltip() { document.querySelector("#tooltip").hidden = true; }
+function interactiveTooltip(target, text) {
+  target.tabIndex = 0; target.setAttribute("aria-label", text);
+  if (["I", "SPAN"].includes(target.tagName)) target.setAttribute("role", "img");
+  target.addEventListener("pointerenter", () => tooltipFor(target, text)); target.addEventListener("pointerleave", hideTooltip);
+  target.addEventListener("focus", () => tooltipFor(target, text)); target.addEventListener("blur", hideTooltip);
+}
 
 function page(id, kicker, title, tone = "") {
   const root = node("section", `page ${tone}`.trim());
@@ -33,9 +47,9 @@ function foot(root, text, bundle) {
 
 function metricRow(items) {
   const row = node("div", "metric-row");
-  for (const [label, result] of items) {
-    const item = node("div", "metric");
-    append(item, node("strong", "", format(result)), node("span", "", label));
+  for (const [label, result, kind] of items) {
+    const item = node("div", `metric${kind ? ` metric-${kind}` : ""}`);
+    append(item, kind === "token" ? tokenAmount(result) : node("strong", "", format(result)), node("span", "", label));
     row.append(item);
   }
   return row;
@@ -55,7 +69,7 @@ function memoryQuotes(items) {
   const quotes = node("div", "memory-quotes");
   items.filter((item) => item?.record).forEach((item) => {
     const quote = node("article");
-    append(quote, node("p", "kicker", item.label), node("blockquote", "", item.record.excerpt || `${item.record.charCount} 字 Prompt`), node("small", "", dateText(item.record.localDateTime)));
+    append(quote, node("p", "kicker", item.label), node("blockquote", "", item.record.excerpt || `${item.record.charCount} 字 Prompt`), node("small", "", `${dateText(item.record.localDateTime)} · ${promptSource(item.record)}`));
     quotes.append(quote);
   });
   return quotes;
@@ -86,35 +100,38 @@ function origin(bundle) {
   const root = page("origin", "ORIGIN", "从第一句话开始", "red");
   const first = value(bundle.prompts.firstInPeriod);
   root.append(first ? node("blockquote", "quote", first.excerpt || `第一条提示词，共 ${first.charCount} 字`) : node("p", "empty", "本周期没有可用提示词"));
-  foot(root, first ? `${dateText(first.localDateTime)} · ${first.charCount} 字` : "数据不足", bundle);
+  foot(root, first ? `${dateText(first.localDateTime)} · ${first.charCount} 字 · ${promptSource(first)}` : "数据不足", bundle);
   return root;
 }
 
 function scale(bundle) {
   const root = page("scale", "SCALE", "这个周期有多大", "dark"); const totals = value(bundle.overview.totals, {});
   const body = node("div"); append(body, node("div", "hero-number", format(totals.prompts || 0)), node("div", "hero-label", "条真实用户提示词"));
-  root.append(body, metricRow([["turn", totals.turns], ["session", totals.sessions], ["Token", totals.totalTokens], ["新增行", totals.addedLines]]));
+  root.append(body, metricRow([["turn", totals.turns], ["session", totals.sessions], ["Token", totals.totalTokens, "token"], ["新增行", totals.addedLines]]));
   return root;
 }
 
 function calendar(bundle) {
   const root = page("calendar", "TIME / 01", "编程日历", "green"); const days = value(bundle.activity.calendar.days, []); const max = Math.max(1, ...days.map((item) => item.prompts));
-  const grid = node("div", "calendar"); grid.style.setProperty("--columns", bundle.manifest.report.period.kind === "year" ? "53" : "31");
-  days.forEach((day) => { const cell = node("i", "day"); cell.style.setProperty("--level", String(Math.ceil((day.prompts / max) * 8))); cell.dataset.label = `${day.codingDay} · ${day.prompts} prompts`; grid.append(cell); });
-  root.append(grid); const streak = value(bundle.records.longestStreak, {}); foot(root, `${days.filter((item) => item.prompts).length} 个活跃日 · 最长连续 ${streak.days || 0} 天`, bundle); return root;
+  const scroll = node("div", "calendar-scroll"); const grid = node("div", "calendar");
+  grid.classList.add(days.length < 100 ? "calendar-short" : "calendar-long");
+  const offset = days.length ? new Date(`${days[0].codingDay}T00:00:00Z`).getUTCDay() : 0;
+  for (let index = 0; index < offset; index += 1) { const pad = node("i", "calendar-pad"); pad.setAttribute("aria-hidden", "true"); grid.append(pad); }
+  days.forEach((day) => { const cell = node("i", "day"); const label = `${day.codingDay} · ${day.prompts} prompts`; cell.style.setProperty("--level", String(Math.ceil((day.prompts / max) * 8))); interactiveTooltip(cell, label); grid.append(cell); });
+  scroll.append(grid); root.append(scroll); const streak = value(bundle.records.longestStreak, {}); foot(root, `${days.filter((item) => item.prompts).length} 个活跃日 · 最长连续 ${streak.days || 0} 天`, bundle); return root;
 }
 
 function peakDay(bundle) {
   const root = page("peak-day", "TIME / 02", "最投入的一天"); const busiest = value(bundle.records.busiestDay); if (!busiest) { root.append(node("p", "empty", "数据不足")); return root; }
   const events = bundle.activity.dayTimelines[busiest.codingDay] || []; const hours = Array.from({ length: 24 }, () => 0); events.forEach((event) => { const hour = Number(event.at.split("T")[1]?.slice(0, 2)); if (Number.isFinite(hour)) hours[hour] += 1; }); const max = Math.max(1, ...hours);
-  const timeline = node("div", "timeline"); hours.forEach((count) => { const bar = node("i"); bar.style.setProperty("--value", String(Math.max(1, count / max * 100))); timeline.append(bar); });
+  const timeline = node("div", "timeline"); hours.forEach((count, hour) => { const bar = node("i"); bar.style.setProperty("--value", String(Math.max(1, count / max * 100))); interactiveTooltip(bar, `${String(hour).padStart(2, "0")}:00 · ${count} events`); timeline.append(bar); });
   const dayPrompts = value(bundle.records.busiestDayPrompts, {});
-  root.append(timeline, metricRow([["日期", busiest.codingDay], ["提示词", busiest.prompts], ["工具调用", busiest.toolCalls], ["Token", busiest.totalTokens]]), memoryQuotes([{ label: "这一天从这里开始", record: dayPrompts.first }, { label: "这一天停在这里", record: dayPrompts.last }])); return root;
+  root.append(timeline, metricRow([["日期", busiest.codingDay, "short"], ["提示词", busiest.prompts], ["工具调用", busiest.toolCalls], ["Token", busiest.totalTokens, "token"]]), memoryQuotes([{ label: "这一天从这里开始", record: dayPrompts.first }, { label: "这一天停在这里", record: dayPrompts.last }])); return root;
 }
 
 function clock(bundle) {
   const root = page("clock", "TIME / 03", "你的 24 小时", "dark"); const hours = value(bundle.activity.byHour, []); const max = Math.max(1, ...hours.map((item) => item.prompts)); const bars = node("div", "bars");
-  hours.forEach((item) => { const wrap = node("div"); const bar = node("i"); bar.style.setProperty("--value", String(Math.max(1, item.prompts / max * 100))); wrap.append(bar); if (item.hour % 4 === 0) wrap.append(node("small", "", String(item.hour).padStart(2, "0"))); bars.append(wrap); });
+  hours.forEach((item) => { const wrap = node("div"); const bar = node("i"); bar.style.setProperty("--value", String(Math.max(1, item.prompts / max * 100))); interactiveTooltip(bar, `${String(item.hour).padStart(2, "0")}:00 · ${item.prompts} prompts · ${item.turns} turns · ${item.toolCalls} tool calls`); wrap.append(bar); if (item.hour % 4 === 0) wrap.append(node("small", "", String(item.hour).padStart(2, "0"))); bars.append(wrap); });
   const earliest = value(bundle.records.earliestActivity); const latest = value(bundle.records.latestActivity); root.append(bars, memoryQuotes([{ label: `最早 ${earliest?.localDateTime?.slice(11) || "--"} 开始`, record: earliest }, { label: `最晚 ${latest?.localDateTime?.slice(11) || "--"} 还在输入`, record: latest }])); foot(root, `最早 ${dateText(earliest?.localDateTime)} · 最晚 ${dateText(latest?.localDateTime)}`, bundle); return root;
 }
 
@@ -127,7 +144,7 @@ function promptStyle(bundle) {
   root.append(metricRow([["中位字数", length.median], ["P90 字数", length.p90], ["含列表", percent(structure.list?.rate)], ["含代码块", percent(structure.codeBlock?.rate)], ["中英混合", languages.mixed]]));
   const labels = { longest: "最长 Prompt", most_structured: "结构最丰富", most_context_rich: "上下文最丰富", keyword_dense: "高频词最集中" };
   const records = node("div", "prompt-records");
-  value(bundle.prompts.notable, []).forEach((item) => { const record = node("article", "prompt-record"); append(record, node("p", "kicker", labels[item.kind] || item.kind), node("p", "prompt-excerpt", item.excerpt || `${item.charCount} 字`), node("small", "", `${dateText(item.localDateTime)} · ${item.charCount} 字`)); records.append(record); });
+  value(bundle.prompts.notable, []).forEach((item) => { const record = node("article", "prompt-record"); append(record, node("p", "kicker", labels[item.kind] || item.kind), node("p", "prompt-excerpt", item.excerpt || `${item.charCount} 字`), node("small", "", `${dateText(item.localDateTime)} · ${item.charCount} 字 · ${promptSource(item)}`)); records.append(record); });
   root.append(records);
   foot(root, "仅统计长度、结构与上下文信号，不评价 Prompt 好坏", bundle); return root;
 }
@@ -135,8 +152,8 @@ function promptStyle(bundle) {
 function words(bundle) {
   const root = page("words", "EXPRESSION / 02", "你最常说的话", "yellow"); const terms = value(bundle.prompts.terms.frequent, []).slice(0, 32); const contexts = value(bundle.prompts.terms.keywordContexts, []); const contextByTerm = new Map(contexts.map((item) => [item.term, item])); const max = Math.max(1, ...terms.map((item) => item.count));
   const stage = node("div", "word-stage"); const cloud = node("div", "words"); const detail = node("aside", "word-context");
-  const showContext = (term) => { const item = contextByTerm.get(term); detail.replaceChildren(); append(detail, node("p", "kicker", `关键词原文 · ${term}`), node("blockquote", "", item?.representative?.excerpt || "当前隐私模式不包含原文"), node("small", "", item ? `${item.count} 次 · 出现在 ${item.promptCount} 条 Prompt · ${dateText(item.representative.localDateTime)}` : "暂无代表片段")); };
-  terms.forEach((item, index) => { const word = node("button", "", item.term); word.style.setProperty("--weight", String(Math.max(1, Math.round(item.count / max * 8)))); word.title = `${item.count} 次 · ${item.promptCount} 条 Prompt`; word.addEventListener("click", () => showContext(item.term)); cloud.append(word); if (index === 0) showContext(item.term); });
+  const showContext = (term) => { const item = contextByTerm.get(term); detail.replaceChildren(); append(detail, node("p", "kicker", `关键词原文 · ${term}`), node("blockquote", "", item?.representative?.excerpt || "当前隐私模式不包含原文"), node("small", "", item ? `${item.count} 次 · 出现在 ${item.promptCount} 条 Prompt · ${dateText(item.representative.localDateTime)} · ${promptSource(item.representative)}` : "暂无代表片段")); };
+  terms.forEach((item, index) => { const word = node("button", "", item.term); word.style.setProperty("--weight", String(Math.max(1, Math.round(item.count / max * 8)))); interactiveTooltip(word, `${item.term} · ${item.count} 次 · ${item.promptCount} 条 Prompt`); word.addEventListener("click", () => showContext(item.term)); cloud.append(word); if (index === 0) showContext(item.term); });
   append(stage, cloud, detail); root.append(stage);
   const sentences = value(bundle.prompts.keySentences, []).slice(0, 3); if (sentences.length) { const repeated = node("div", "sentence-strip"); sentences.forEach((item) => append(repeated, node("span", "", `“${item.sentence || `${item.charCount} 字句子`}” × ${item.promptCount}`))); root.append(repeated); }
   const customExcludedCount = (bundle.prompts.terms.customExcludedWords || []).length; foot(root, `${terms.length} 个高频词 · ${bundle.prompts.terms.stopwordVersion}${customExcludedCount ? ` · 自定义排除 ${customExcludedCount} 个` : ""}`, bundle); return root;
@@ -156,7 +173,7 @@ function codeFootprint(bundle) {
 }
 
 function languages(bundle) {
-  const root = page("languages", "CREATION / 02", "编程语言光谱", "dark"); const items = value(bundle.code.languages, []); const spectrum = node("div", "spectrum"); items.slice(0, 12).forEach((item, index) => { const band = node("span"); band.style.setProperty("--share", String(item.share)); band.style.setProperty("--color", colors[index % colors.length]); band.dataset.label = `${item.language} · ${format(item.addedLines)} 行 · ${percent(item.share)}`; spectrum.append(band); }); root.append(spectrum, ranked(items, "language", "addedLines", 8)); return root;
+  const root = page("languages", "CREATION / 02", "编程语言光谱", "dark"); const items = value(bundle.code.languages, []); const spectrum = node("div", "spectrum"); items.slice(0, 12).forEach((item, index) => { const band = node("span"); const label = `${item.language} · ${format(item.addedLines)} 行 · ${percent(item.share)}`; band.style.setProperty("--share", String(item.share)); band.style.setProperty("--color", colors[index % colors.length]); interactiveTooltip(band, label); spectrum.append(band); }); root.append(spectrum, ranked(items, "language", "addedLines", 8)); return root;
 }
 
 function modelMap(bundle) {
@@ -168,7 +185,7 @@ function modelMap(bundle) {
     const row = node("div", "matrix-row"); row.append(node("span", "model-name", model.displayName));
     for (let hour = 0; hour < 24; hour += 1) {
       const count = hourLookup.get(hour)?.[model.modelId] || 0; const cell = node("i", hour % 2 ? "odd-hour" : "");
-      cell.style.setProperty("--level", String(Math.ceil((count / max) * 7))); cell.title = `${String(hour).padStart(2,"0")}:00 · ${count} turns`; cell.setAttribute("aria-label", cell.title); row.append(cell);
+      cell.style.setProperty("--level", String(Math.ceil((count / max) * 7))); interactiveTooltip(cell, `${model.displayName} · ${String(hour).padStart(2,"0")}:00 · ${count} turns`); row.append(cell);
     }
     matrix.append(row);
   });
@@ -182,7 +199,7 @@ function tokenJourney(bundle) {
 }
 
 function gitPulse(bundle) {
-  const root = page("git-pulse", "DELIVERY", "提交脉冲", "dark"); const stats = value(bundle.git.commitStats, {}); const promptDays = new Map(value(bundle.activity.calendar.days, []).map((item) => [item.codingDay, item.prompts])); const tokenDays = new Map(value(bundle.tokens.trend, []).map((item) => [item.codingDay, item.total])); const commits = value(bundle.git.commitTrend, []); const maxCommit = Math.max(1, ...commits.map((item) => item.commits)); const maxPrompt = Math.max(1, ...promptDays.values()); const maxToken = Math.max(1, ...tokenDays.values()); const timeline = node("div", "timeline"); commits.forEach((item) => { const combined = item.commits / maxCommit * 45 + (promptDays.get(item.codingDay)||0) / maxPrompt * 30 + (tokenDays.get(item.codingDay)||0) / maxToken * 25; const bar = node("i"); bar.style.setProperty("--value", String(Math.max(2,combined))); bar.title = `${item.codingDay} · ${item.commits} commits`; timeline.append(bar); }); root.append(timeline, metricRow([["提交", stats.commits], ["提交活跃日", stats.activeDays], ["Git 新增行", stats.linesAdded], ["扫描仓库", bundle.git.repositories.length]])); foot(root, "Prompt、Token 与 commit 仅按日期并列，不表示单次归因", bundle); return root;
+  const root = page("git-pulse", "DELIVERY", "提交脉冲", "dark"); const stats = value(bundle.git.commitStats, {}); const promptDays = new Map(value(bundle.activity.calendar.days, []).map((item) => [item.codingDay, item.prompts])); const tokenDays = new Map(value(bundle.tokens.trend, []).map((item) => [item.codingDay, item.total])); const commits = value(bundle.git.commitTrend, []); const maxCommit = Math.max(1, ...commits.map((item) => item.commits)); const maxPrompt = Math.max(1, ...promptDays.values()); const maxToken = Math.max(1, ...tokenDays.values()); const timeline = node("div", "timeline"); commits.forEach((item) => { const prompts = promptDays.get(item.codingDay) || 0; const tokens = tokenDays.get(item.codingDay) || 0; const combined = item.commits / maxCommit * 45 + prompts / maxPrompt * 30 + tokens / maxToken * 25; const bar = node("i"); bar.style.setProperty("--value", String(Math.max(2,combined))); interactiveTooltip(bar, `${item.codingDay} · ${item.commits} commits · ${prompts} prompts · ${tokenDecimal.format(tokens / 1_000_000)}M tokens`); timeline.append(bar); }); root.append(timeline, metricRow([["提交", stats.commits], ["提交活跃日", stats.activeDays], ["Git 新增行", stats.linesAdded], ["扫描仓库", bundle.git.repositories.length]])); foot(root, "Prompt、Token 与 commit 仅按日期并列，不表示单次归因", bundle); return root;
 }
 
 function closing(bundle) {
@@ -200,10 +217,17 @@ const builders = [cover, origin, scale, calendar, peakDay, clock, rhythm, prompt
 if (bundle.git.availability === "available") builders.push(gitPulse);
 builders.push(closing);
 const pages = builders.map((builder) => builder(bundle));
+pages.forEach((item) => {
+  const head = [...item.children].find((child) => child.tagName === "HEADER");
+  const footer = [...item.children].find((child) => child.tagName === "FOOTER");
+  const content = node("div", "page-content");
+  [...item.children].filter((child) => child !== head && child !== footer).forEach((child) => content.append(child));
+  if (head) head.after(content); else item.prepend(content);
+});
 let current = Math.max(0, pages.findIndex((item) => item.dataset.pageId === location.hash.replace("#/page/", "")));
 const app = document.querySelector("#app"); const previous = document.querySelector("#previous"); const next = document.querySelector("#next"); const counter = document.querySelector("#counter"); const progress = document.querySelector("#progress i");
 function show(index, updateHash = true) {
-  current = Math.max(0, Math.min(pages.length - 1, index)); app.replaceChildren(pages[current]); counter.textContent = `${String(current + 1).padStart(2, "0")} / ${String(pages.length).padStart(2, "0")}`; progress.style.setProperty("--progress", `${(current + 1) / pages.length * 100}%`); previous.disabled = current === 0; next.disabled = current === pages.length - 1; if (updateHash) history.replaceState(null, "", `#/page/${pages[current].dataset.pageId}`);
+  hideTooltip(); current = Math.max(0, Math.min(pages.length - 1, index)); app.replaceChildren(pages[current]); counter.textContent = `${String(current + 1).padStart(2, "0")} / ${String(pages.length).padStart(2, "0")}`; progress.style.setProperty("--progress", `${(current + 1) / pages.length * 100}%`); previous.disabled = current === 0; next.disabled = current === pages.length - 1; if (updateHash) history.replaceState(null, "", `#/page/${pages[current].dataset.pageId}`);
 }
 previous.addEventListener("click", () => show(current - 1)); next.addEventListener("click", () => show(current + 1));
 window.addEventListener("keydown", (event) => { if (["ArrowDown", "PageDown", " "].includes(event.key)) { event.preventDefault(); show(current + 1); } if (["ArrowUp", "PageUp"].includes(event.key)) { event.preventDefault(); show(current - 1); } });

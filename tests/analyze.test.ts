@@ -40,6 +40,8 @@ describe("V1 bundle", () => {
     expect((bundle.records.busiestDayPrompts as any).value.first.excerpt).toContain("接口兼容");
     expect((bundle.records.longestGap as any).value.days).toBe(1);
     expect((bundle.records.memoryMoments as any).value.map((item: any) => item.kind)).toContain("return_after_gap");
+    expect((bundle.prompts.firstInPeriod as any).value).toMatchObject({ projectName: "demo", modelId: "gpt-test" });
+    expect((bundle.records.earliestActivity as any).value).toMatchObject({ projectName: "demo", modelId: "gpt-test" });
     const serialized = JSON.stringify(bundle);
     for (const forbidden of ["taskType", "taskTransition", "switchReason", "taskSuccess", "projectFamiliarity", "reasoningPlan", "attributedCommitTokens"]) expect(serialized).not.toContain(forbidden);
   });
