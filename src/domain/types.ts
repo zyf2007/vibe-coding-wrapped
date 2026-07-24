@@ -1,5 +1,5 @@
 export type Period = {
-  kind: "year" | "month";
+  kind: "year" | "month" | "range";
   value: string;
   startCodingDay: string;
   endCodingDay: string;
@@ -11,6 +11,14 @@ export type Scope = {
   dayStartHour: number;
   privacy: "full" | "redacted" | "metrics-only";
   excludedWords?: string[];
+};
+
+export type AgentType = "codex" | "claude-code" | "opencode";
+
+export type SourceFact = {
+  id: string;
+  agentType: AgentType;
+  root: string;
 };
 
 export type Evidence = "direct" | "structural_derived";
@@ -44,6 +52,7 @@ export type TokenFact = {
   modelId?: string;
   input: number;
   cachedInput: number;
+  cacheWrite?: number;
   output: number;
   reasoning: number;
   total: number;
@@ -56,6 +65,7 @@ export type ToolFact = {
   turnId?: string;
   occurredAt: string;
   name: string;
+  rawName?: string;
   category: string;
   cwd?: string;
   modelId?: string;
@@ -111,7 +121,7 @@ export type FactSet = {
   diagnostics: Diagnostic[];
   scannedFiles: number;
   scannedBytes: number;
-  sourceIds: string[];
+  sources: SourceFact[];
 };
 
 export type Bundle = Record<string, unknown> & {

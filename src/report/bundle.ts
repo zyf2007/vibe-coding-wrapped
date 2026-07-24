@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import type { Bundle } from "./types.js";
+import type { Bundle } from "../domain/types.js";
 
 const artifactNames = ["overview", "activity", "prompts", "projects", "tools", "code", "models", "tokens", "git", "records", "provenance"] as const;
 

@@ -1,11 +1,13 @@
 import { createReadStream } from "node:fs";
-import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { readdir, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import type { FactSet, FileChangeFact, PromptFact, Scope, ToolFact } from "./types.js";
-import { codingDay, inPeriod } from "./time.js";
-import { hash, languageForPath, stableId } from "./utils.js";
+import type { FactSet, FileChangeFact, PromptFact, Scope, ToolFact } from "../../domain/types.js";
+import { emptyFacts } from "../../domain/facts.js";
+import { commandFamily, isCheckCommand, normalizeTool, parseExitCode } from "../../domain/tools.js";
+import { codingDay, inPeriod } from "../../domain/time.js";
+import { hash, languageForPath, stableId } from "../../domain/utils.js";
+import { readFactCache, writeFactCache } from "../../storage/fact-cache.js";
 
 type RawEvent = { timestamp?: string; type?: string; payload?: Record<string, any> };
 
@@ -81,33 +83,8 @@ function parseToolInput(payload: Record<string, any>): { raw: string; parsed?: R
   }
 }
 
-function toolCategory(name: string, input: string): string {
-  const value = name.toLowerCase();
-  if (/spawn_agent|send_message|followup_task/.test(value)) return "subagent";
-  if (/wait_agent|wait|write_stdin/.test(value)) return "wait";
-  if (/apply_patch|write|edit/.test(value)) return "patch";
-  if (/view_image|image/.test(value)) return "media";
-  if (/search|rg|grep|find|list/.test(value)) return "search";
-  if (/read|cat|sed|head|tail/.test(value)) return "read";
-  if (/exec|shell|command/.test(value)) {
-    if (isCheckCommand(input)) return "shell-check";
-    return "shell";
-  }
-  if (/plan|goal/.test(value)) return "coordination";
-  return "other";
-}
-
-function isCheckCommand(value: string): boolean {
-  return /(?:^|[\s;&|])(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|check|lint|build|typecheck)|(?:cargo|go)\s+test|pytest|vitest|jest|tsc(?:\s|$)|gradle\w*\s+(?:test|check|build)|mvn\s+(?:test|verify)|dotnet\s+(?:test|build)|swift\s+test/i.test(value);
-}
-
-function commandFamily(value: string): string | undefined {
-  const match = value.trim().match(/^(?:\{[\s\S]*?cmd["']?\s*:\s*["'])?([\w./-]+)/);
-  return match?.[1] ? basename(match[1]) : undefined;
-}
-
 function extractFileChanges(tool: ToolFact, input: string): FileChangeFact[] {
-  if (tool.name !== "apply_patch" && !/apply_patch/i.test(tool.name)) return [];
+  if (tool.name !== "file.patch") return [];
   const result: FileChangeFact[] = [];
   const lines = input.split("\n");
   let current: { path: string; added: number; deleted: number } | undefined;
@@ -140,16 +117,6 @@ function extractFileChanges(tool: ToolFact, input: string): FileChangeFact[] {
   return result;
 }
 
-function parseExitCode(output: unknown): number | undefined {
-  if (output && typeof output === "object") {
-    const direct = (output as Record<string, unknown>).exit_code;
-    if (typeof direct === "number") return direct;
-  }
-  const serialized = String(typeof output === "string" ? output : JSON.stringify(output ?? ""));
-  const match = serialized.match(/["']?exit_code["']?\s*[:=]\s*(-?\d+)/) ?? serialized.match(/Process exited with code\s+(-?\d+)/i);
-  return match ? Number(match[1]) : undefined;
-}
-
 export async function readCodexFacts(roots: string[], scope: Scope, onProgress?: (message: string) => void, options: { bypassCache?: boolean } = {}): Promise<FactSet> {
   const discovered = new Map<string, string[]>();
   const fingerprints: string[] = [];
@@ -162,23 +129,16 @@ export async function readCodexFacts(roots: string[], scope: Scope, onProgress?:
       fingerprints.push(`${file}\0${info.size}\0${info.mtimeMs}`);
     }
   }
-  const cacheBase = process.env.XDG_CACHE_HOME ? resolve(process.env.XDG_CACHE_HOME) : join(homedir(), ".cache");
-  const cacheDirectory = join(cacheBase, "vibe-coding-wrapped");
-  const cacheKey = hash(JSON.stringify({ version: 1, roots: roots.map((root) => resolve(root)).sort(), period: scope.period, timezone: scope.timezone, dayStartHour: scope.dayStartHour, fingerprints: fingerprints.sort() }));
-  const cacheFile = join(cacheDirectory, `${cacheKey}.json`);
+  const cacheKey = hash(JSON.stringify({ version: 2, roots: roots.map((root) => resolve(root)).sort(), period: scope.period, timezone: scope.timezone, dayStartHour: scope.dayStartHour, fingerprints: fingerprints.sort() }));
   if (!options.bypassCache) {
-    try {
-      const cached = JSON.parse(await readFile(cacheFile, "utf8")) as FactSet;
-      if (cached && Array.isArray(cached.prompts) && Array.isArray(cached.tools)) {
-        onProgress?.(`Fact cache hit: ${cacheKey.slice(0, 12)}`);
-        return cached;
-      }
-    } catch {
-      // A missing or stale cache is a normal first-run condition.
+    const cached = await readFactCache(cacheKey);
+    if (cached) {
+      onProgress?.(`Fact cache hit: ${cacheKey.slice(0, 12)}`);
+      return cached;
     }
   }
 
-  const facts: FactSet = { sessions: [], turns: [], prompts: [], tokens: [], tools: [], fileChanges: [], diagnostics: [], scannedFiles: 0, scannedBytes: 0, sourceIds: [] };
+  const facts = emptyFacts();
   const seen = { sessions: new Set<string>(), turns: new Set<string>(), prompts: new Set<string>(), tokens: new Set<string>(), tools: new Set<string>(), changes: new Set<string>() };
   const toolByCallId = new Map<string, ToolFact>();
   const turnModels = new Map<string, { modelId: string; effort?: string; cwd?: string }>();
@@ -186,7 +146,7 @@ export async function readCodexFacts(roots: string[], scope: Scope, onProgress?:
   for (const inputRoot of roots) {
     const root = resolve(inputRoot);
     const sourceId = stableId("source", root);
-    facts.sourceIds.push(sourceId);
+    facts.sources.push({ id: sourceId, agentType: "codex", root });
     const files = discovered.get(root) ?? [];
     onProgress?.(`Scanning ${files.length} candidate files from ${root}`);
     for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
@@ -293,17 +253,18 @@ export async function readCodexFacts(roots: string[], scope: Scope, onProgress?:
 
         if (event.type === "response_item" && ["custom_tool_call", "function_call"].includes(String(payload.type))) {
           const callId = String(payload.call_id ?? payload.id ?? stableId("call", `${sessionId}:${timestamp}:${facts.tools.length}`));
-          const name = String(payload.name ?? "unknown");
+          const rawName = String(payload.name ?? "unknown");
+          const normalized = normalizeTool(rawName);
           const input = parseToolInput(payload);
           const turnId = metadataTurnId(payload) ?? currentTurn;
           const id = stableId("tool", `${sessionId}:${callId}`);
           if (seen.tools.has(id)) continue;
           seen.tools.add(id);
           const tool: ToolFact = {
-            id, callId, sessionId, turnId, occurredAt: timestamp, name,
-            category: toolCategory(name, input.raw), cwd: sessionCwd, modelId: currentModel,
+            id, callId, sessionId, turnId, occurredAt: timestamp, name: normalized.name, rawName,
+            category: normalized.category, cwd: sessionCwd, modelId: currentModel,
             commandFamily: commandFamily(input.parsed?.cmd ?? input.raw),
-            isMutation: /apply_patch|write|edit/i.test(name),
+            isMutation: normalized.isMutation,
             isCheckInvocation: isCheckCommand(String(input.parsed?.cmd ?? input.raw)),
           };
           facts.tools.push(tool);
@@ -339,9 +300,7 @@ export async function readCodexFacts(roots: string[], scope: Scope, onProgress?:
     change.modelId = tool?.modelId;
   }
 
-  facts.sourceIds = [...new Set(facts.sourceIds)].sort();
-  await mkdir(cacheDirectory, { recursive: true, mode: 0o700 });
-  await writeFile(cacheFile, JSON.stringify(facts), { encoding: "utf8", mode: 0o600 });
-  await chmod(cacheFile, 0o600);
+  facts.sources = [...new Map(facts.sources.map((source) => [source.id, source])).values()].sort((a, b) => a.id.localeCompare(b.id));
+  await writeFactCache(cacheKey, facts);
   return facts;
 }

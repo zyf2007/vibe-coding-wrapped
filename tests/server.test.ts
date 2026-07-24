@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { startStaticServer, type StaticServer } from "../src/server.js";
+import { startStaticServer, type StaticServer } from "../src/http/server.js";
 
 const temporaryDirectories: string[] = [];
 const servers: StaticServer[] = [];

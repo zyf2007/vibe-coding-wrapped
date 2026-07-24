@@ -2,7 +2,7 @@ import { access, cp, mkdir, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 async function resolveTheme(selection: string): Promise<string> {
   const builtin = join(sourceRoot, "themes", selection);

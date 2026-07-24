@@ -69,6 +69,18 @@ export function createPeriod(kind: "year" | "month", value: string): Period {
   return { kind, value, startCodingDay: `${value}-01`, endCodingDay: `${value}-${last}` };
 }
 
+export function createRangePeriod(value: string): Period {
+  const match = value.trim().match(/^(\d{4})[.-](\d{1,2})\s*-\s*(\d{4})[.-](\d{1,2})$/);
+  if (!match) throw new Error(`Invalid range: ${value}; expected YYYY.M-YYYY.M`);
+  const startYear = Number(match[1]), startMonth = Number(match[2]), endYear = Number(match[3]), endMonth = Number(match[4]);
+  if (startMonth < 1 || startMonth > 12 || endMonth < 1 || endMonth > 12) throw new Error(`Invalid range: ${value}; month must be 1..12`);
+  const start = `${startYear}-${String(startMonth).padStart(2, "0")}`;
+  const end = `${endYear}-${String(endMonth).padStart(2, "0")}`;
+  if (start > end) throw new Error(`Invalid range: ${value}; start must not be after end`);
+  const last = new Date(Date.UTC(endYear, endMonth, 0)).getUTCDate();
+  return { kind: "range", value: `${start.replace("-", ".")}-${end.replace("-", ".")}`, startCodingDay: `${start}-01`, endCodingDay: `${end}-${last}` };
+}
+
 export function inPeriod(day: string, period: Period): boolean {
   return day >= period.startCodingDay && day <= period.endCodingDay;
 }

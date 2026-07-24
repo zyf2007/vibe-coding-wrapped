@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
 import { promisify } from "node:util";
-import type { FactSet, Scope } from "./types.js";
-import { codingDay, inPeriod } from "./time.js";
-import { displayProject, hash, metric, stableId, unavailable } from "./utils.js";
+import type { FactSet, Scope } from "../domain/types.js";
+import { codingDay, inPeriod } from "../domain/time.js";
+import { displayProject, hash, metric, stableId, unavailable } from "../domain/utils.js";
 
 const execFileAsync = promisify(execFile);
 

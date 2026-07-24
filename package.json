@@ -1,14 +1,14 @@
 {
   "name": "vibe-coding-wrapped",
   "version": "0.2.0",
-  "description": "Generate a private, static Codex activity report from local session logs.",
+  "description": "Generate a private, static coding activity report from local Agent session logs.",
   "type": "module",
   "bin": {
     "vibe-wrapped": "./dist/cli.js",
     "vibe-coding-wrapped": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node ./scripts/clean-dist.js && tsc -p tsconfig.json",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
     "check": "tsc -p tsconfig.json --noEmit && vitest run",
@@ -22,7 +22,8 @@
     "dist",
     "themes",
     "scripts",
-    "README.md"
+    "README.md",
+    "AGENT_ADAPTERS.md"
   ],
   "keywords": [
     "codex",
@@ -40,9 +41,13 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.17.0",
     "tsx": "^4.20.0",
     "typescript": "^5.8.0",
     "vitest": "^3.2.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1"
   }
 }

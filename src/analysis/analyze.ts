@@ -1,8 +1,8 @@
-import type { Bundle, FactSet, PromptFact, Scope } from "./types.js";
-import { activeMinute, codingDay, enumerateDays, localDateTime, zonedParts } from "./time.js";
+import type { Bundle, FactSet, PromptFact, Scope } from "../domain/types.js";
+import { activeMinute, codingDay, enumerateDays, localDateTime, zonedParts } from "../domain/time.js";
 import { analyzeGit } from "./git.js";
 import { DEFAULT_STOPWORDS, STOPWORD_VERSION } from "./stopwords.js";
-import { displayProject, median, metric, percentile, redactText, sortObject, stableId, unavailable } from "./utils.js";
+import { displayProject, median, metric, percentile, redactText, sortObject, stableId, unavailable } from "../domain/utils.js";
 
 const segmenters = new Map<string, Intl.Segmenter>();
 
@@ -134,7 +134,7 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
   facts.turns.forEach((item) => addTime(item.occurredAt, "turns"));
   facts.tools.forEach((item) => addTime(item.occurredAt, "toolCalls"));
 
-  const periodCount = countBy(activeDays, (item) => scope.period.kind === "year" ? item.codingDay.slice(0, 7) : `week-${Math.ceil(Number(item.codingDay.slice(8, 10)) / 7)}`);
+  const periodCount = countBy(activeDays, (item) => scope.period.kind === "month" ? `week-${Math.ceil(Number(item.codingDay.slice(8, 10)) / 7)}` : item.codingDay.slice(0, 7));
   const activity = {
     calendar: { days: metric("activity.calendar", calendarDays, facts.prompts.length, 1, "direct") },
     byHour: metric("activity.by_hour", hourly, facts.prompts.length, 1),
@@ -288,12 +288,13 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
   const toolsByModel = Object.entries(countBy(facts.tools, (item) => modelId(item.modelId))).map(([id, count]) => ({ modelId: id, toolCalls: count, checkInvocations: facts.tools.filter((item) => modelId(item.modelId) === id && item.isCheckInvocation).length })).sort((a, b) => b.toolCalls - a.toolCalls || a.modelId.localeCompare(b.modelId));
   const tools = {
     totals: metric("tools.totals", { calls: facts.tools.length, turnsWithTools: toolsByTurn.size, checkInvocations: facts.tools.filter((item) => item.isCheckInvocation).length }, facts.tools.length, 1, "direct"),
+    items: metric("tools.items", sortObject(countBy(facts.tools, (item) => item.name)).map((item, rank) => ({ rank: rank + 1, tool: item.id, count: item.count })), facts.tools.length, 1, "direct"),
     categories: metric("tools.categories", sortObject(countBy(facts.tools, (item) => item.category)).map((item, rank) => ({ rank: rank + 1, category: item.id, count: item.count })), facts.tools.length, 1),
     linkedPrompt: metric("tools.linked_prompt", { linkedCalls: linkedToolCount, totalCalls: facts.tools.length, medianCallsPerLinkedPrompt: median([...toolsByTurn.values()].map((items) => items.length)) }, facts.tools.length, facts.tools.length ? linkedToolCount / facts.tools.length : 0),
     sequenceMotifs: metric("tools.sequence_motifs", sortObject(motifs).slice(0, 20).map((item, rank) => ({ rank: rank + 1, sequence: item.id.split(" -> "), count: item.count })), toolsByTurn.size, facts.tools.length ? linkedToolCount / facts.tools.length : 0),
     postChangeChecks: metric("tools.post_change_checks", { checkedTurns: checkedMutationTurns, mutationTurns: mutationTurns.length, rate: mutationTurns.length ? checkedMutationTurns / mutationTurns.length : 0 }, mutationTurns.length, linkedToolCount / Math.max(1, facts.tools.length)),
     outcomes: metric("tools.outcomes", { exitCodes: sortObject(countBy(outcomeTools, (item) => String(item.exitCode))), observed: outcomeTools.length, total: facts.tools.length }, facts.tools.length, facts.tools.length ? outcomeTools.length / facts.tools.length : 0, "direct"),
-    subagents: metric("tools.subagents", { spawnCalls: facts.tools.filter((item) => /spawn_agent/.test(item.name)).length, waitCalls: facts.tools.filter((item) => /wait_agent/.test(item.name)).length }, facts.tools.length, 1, "direct"),
+    subagents: metric("tools.subagents", { spawnCalls: facts.tools.filter((item) => item.name === "agent.delegate").length, waitCalls: facts.tools.filter((item) => item.name === "agent.wait").length }, facts.tools.length, 1, "direct"),
     byModel: toolsByModel,
   };
 
@@ -342,11 +343,11 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
     transitions: metric("models.transitions", sortObject(transitions).map((item) => { const [from, to] = item.id.split(" -> "); return { from, to, count: item.count }; }), facts.turns.length, 1),
   };
 
-  const tokenTotals = facts.tokens.reduce((sum, item) => ({ input: sum.input + item.input, cachedInput: sum.cachedInput + item.cachedInput, output: sum.output + item.output, reasoning: sum.reasoning + item.reasoning, total: sum.total + item.total }), { input: 0, cachedInput: 0, output: 0, reasoning: 0, total: 0 });
+  const tokenTotals = facts.tokens.reduce((sum, item) => ({ input: sum.input + item.input, cachedInput: sum.cachedInput + item.cachedInput, cacheWrite: sum.cacheWrite + (item.cacheWrite ?? 0), output: sum.output + item.output, reasoning: sum.reasoning + item.reasoning, total: sum.total + item.total }), { input: 0, cachedInput: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 0 });
   const tokenDays = new Map<string, typeof tokenTotals>();
-  for (const item of facts.tokens) { const day = codingDay(item.occurredAt, scope.timezone, scope.dayStartHour); const row = tokenDays.get(day) ?? { input: 0, cachedInput: 0, output: 0, reasoning: 0, total: 0 }; row.input += item.input; row.cachedInput += item.cachedInput; row.output += item.output; row.reasoning += item.reasoning; row.total += item.total; tokenDays.set(day, row); }
+  for (const item of facts.tokens) { const day = codingDay(item.occurredAt, scope.timezone, scope.dayStartHour); const row = tokenDays.get(day) ?? { input: 0, cachedInput: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 0 }; row.input += item.input; row.cachedInput += item.cachedInput; row.cacheWrite += item.cacheWrite ?? 0; row.output += item.output; row.reasoning += item.reasoning; row.total += item.total; tokenDays.set(day, row); }
   const byModelTokens = new Map<string, typeof tokenTotals>();
-  for (const item of facts.tokens) { const id = modelId(item.modelId); const row = byModelTokens.get(id) ?? { input: 0, cachedInput: 0, output: 0, reasoning: 0, total: 0 }; row.input += item.input; row.cachedInput += item.cachedInput; row.output += item.output; row.reasoning += item.reasoning; row.total += item.total; byModelTokens.set(id, row); }
+  for (const item of facts.tokens) { const id = modelId(item.modelId); const row = byModelTokens.get(id) ?? { input: 0, cachedInput: 0, cacheWrite: 0, output: 0, reasoning: 0, total: 0 }; row.input += item.input; row.cachedInput += item.cachedInput; row.cacheWrite += item.cacheWrite ?? 0; row.output += item.output; row.reasoning += item.reasoning; row.total += item.total; byModelTokens.set(id, row); }
   const tokens = {
     totals: metric("tokens.totals", tokenTotals, facts.tokens.length, 1, "direct"),
     trend: metric("tokens.trend", [...tokenDays.entries()].map(([day, values]) => ({ codingDay: day, ...values })).sort((a, b) => a.codingDay.localeCompare(b.codingDay)), facts.tokens.length, 1),
@@ -415,7 +416,7 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
 
   const definitions = Object.fromEntries(["overview.totals", "activity.calendar", "prompts.first_in_period", "prompts.frequent_terms", "tools.linked_prompt", "tools.post_change_checks", "code.languages", "models.transitions", "tokens.totals", "git.commit_trend", "records.longest_streak"].map((id) => [id, { id, methodVersion: "v1.0.0", evidence: id.includes("totals") ? "direct" : "structural_derived" }]));
   const provenance = {
-    sources: facts.sourceIds.map((id) => ({ sourceId: id, adapterId: "codex" })),
+    sources: facts.sources.map((source) => ({ sourceId: source.id, adapterId: source.agentType })),
     coverage: { scannedFiles: facts.scannedFiles, scannedBytes: facts.scannedBytes, firstEventAt: facts.prompts[0]?.occurredAt, lastEventAt: facts.prompts.at(-1)?.occurredAt },
     diagnostics: { count: facts.diagnostics.length, byCode: sortObject(countBy(facts.diagnostics, (item) => item.code)) },
     producers: { activity: { version: "1.0.0" }, prompts: { version: "1.1.0", tokenizer: "Intl.Segmenter", stopwordVersion: STOPWORD_VERSION }, tools: { version: "1.0.0" }, code: { version: "1.0.0", languageMap: "builtin-v1" }, models: { version: "1.0.0" }, tokens: { version: "1.0.0" }, git: { version: "1.0.0" } },
@@ -427,7 +428,7 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
     $schema: "https://vibe-wrapped.dev/schemas/bundle-manifest-1.0.json",
     bundleSchemaVersion: "1.0.0",
     generator: { name: "vibe-coding-wrapped", version: "0.1.0", analyzerVersion: "1.0.0" },
-    report: { period: scope.period, timezone: scope.timezone, dayStartHour: scope.dayStartHour, agentScope: ["codex"], sourceScope: { count: facts.sourceIds.length }, generatedAt: new Date().toISOString() },
+    report: { period: scope.period, timezone: scope.timezone, dayStartHour: scope.dayStartHour, agentScope: [...new Set(facts.sources.map((source) => source.agentType))].sort(), sourceScope: { count: facts.sources.length }, generatedAt: new Date().toISOString() },
     privacy: { mode: scope.privacy, containsPromptExcerpts: scope.privacy !== "metrics-only" },
     capabilities: { prompts: true, tokenUsage: facts.tokens.length > 0, toolCalls: facts.tools.length > 0, codeChanges: facts.fileChanges.length > 0, gitHistory: git.availability === "available" },
     files: [],

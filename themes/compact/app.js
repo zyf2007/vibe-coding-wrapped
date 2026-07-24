@@ -25,7 +25,7 @@ function interactiveTooltip(target, text) { target.addEventListener("pointerente
 
 function renderHeader(bundle) {
   const totals = value(bundle.overview.totals, {}); const root = el("header", "report-head");
-  append(root, el("p", "eyebrow", "VIBE CODING WRAPPED · CODEX"), el("h1", "", bundle.manifest.report.period.value), el("p", "lede", "一份适合嵌入博客的紧凑活动记录。所有数字来自本地 Codex 日志，可独立静态托管。"), stats([["提示词", totals.prompts], ["活跃日", totals.activeDays], ["工具调用", totals.toolCalls], ["Token", totals.totalTokens], ["新增代码行", totals.addedLines]]));
+  append(root, el("p", "eyebrow", "VIBE CODING WRAPPED · LOCAL AGENTS"), el("h1", "", bundle.manifest.report.period.value), el("p", "lede", "一份适合嵌入博客的紧凑活动记录。所有数字来自本地 Agent 日志，可独立静态托管。"), stats([["提示词", totals.prompts], ["活跃日", totals.activeDays], ["工具调用", totals.toolCalls], ["Token", totals.totalTokens], ["新增代码行", totals.addedLines]]));
   return root;
 }
 
@@ -50,7 +50,7 @@ function renderPrompts(bundle) {
 }
 
 function renderWork(bundle) {
-  const root = section("WORK", "项目与工具"); const projects = value(bundle.projects.items, []); const tools = value(bundle.tools.categories, []); const layout = el("div", "two-col"); append(layout, column("活跃项目", rankList(projects, "displayName", "prompts")), column("工具足迹", rankList(tools, "category", "count"))); root.append(layout); return root;
+  const root = section("WORK", "项目与工具"); const projects = value(bundle.projects.items, []); const tools = value(bundle.tools.items, []); const layout = el("div", "two-col"); append(layout, column("活跃项目", rankList(projects, "displayName", "prompts")), column("工具足迹", rankList(tools, "tool", "count"))); root.append(layout); return root;
 }
 
 function languageList(items) { const root = el("div", "language-bars"); items.slice(0, 8).forEach((item) => { const row = el("div", "language-row"); const track = el("span", "language-track"); const bar = el("i"); bar.style.setProperty("--share", String(item.share)); track.append(bar); append(row, el("span", "", item.language), track, el("span", "", format(item.addedLines))); root.append(row); }); return root; }

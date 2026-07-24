@@ -58,11 +58,11 @@ function ranked(items, nameKey, valueKey, limit = 8) {
 function cover(bundle) {
   const root = node("section", "page dark"); root.dataset.pageId = "cover";
   const head = node("header");
-  append(head, node("p", "kicker", "VIBE CODING WRAPPED · CODEX"), node("h1", "", bundle.manifest.report.period.value));
+  append(head, node("p", "kicker", "VIBE CODING WRAPPED · LOCAL AGENTS"), node("h1", "", bundle.manifest.report.period.value));
   const totals = value(bundle.overview.totals, {});
   const body = node("div"); append(body, node("p", "lede", "这一周期，提示词、工具调用与代码变更在本地日志里留下了可复现的轨迹。"), metricRow([["条提示词", totals.prompts], ["个活跃日", totals.activeDays], ["次工具调用", totals.toolCalls]]));
   root.append(head, body);
-  foot(root, bundle.manifest.report.period.kind === "month" ? "月度回顾" : "年度回顾", bundle);
+  foot(root, bundle.manifest.report.period.kind === "month" ? "月度回顾" : bundle.manifest.report.period.kind === "range" ? "阶段回顾" : "年度回顾", bundle);
   return root;
 }
 
@@ -132,7 +132,7 @@ function projects(bundle) {
 
 function tools(bundle) {
   const root = page("tools", "WORKSPACE / 02", "工具足迹", "green"); const categories = value(bundle.tools.categories, []); const linked = value(bundle.tools.linkedPrompt, {}); const checks = value(bundle.tools.postChangeChecks, {}); const outcomes = value(bundle.tools.outcomes, {});
-  root.append(ranked(categories, "category", "count", 8), metricRow([["Prompt 关联覆盖", percent(bundle.tools.linkedPrompt.coverage)], ["每 Prompt 工具中位数", linked.medianCallsPerLinkedPrompt], ["修改后检查调用", percent(checks.rate)], ["结果状态覆盖", percent(bundle.tools.outcomes.coverage)]])); foot(root, "检查命令调用不等于任务成功", bundle); return root;
+  root.append(ranked(value(bundle.tools.items, categories), "tool", "count", 8), metricRow([["Prompt 关联覆盖", percent(bundle.tools.linkedPrompt.coverage)], ["每 Prompt 工具中位数", linked.medianCallsPerLinkedPrompt], ["修改后检查调用", percent(checks.rate)], ["结果状态覆盖", percent(bundle.tools.outcomes.coverage)]])); foot(root, "检查命令调用不等于任务成功", bundle); return root;
 }
 
 function codeFootprint(bundle) {

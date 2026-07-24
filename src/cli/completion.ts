@@ -25,7 +25,9 @@ _vibe_wrapped() {
   generate_options=(
     '--year[年度报告]:year:'
     '--month[月度报告]:month (YYYY-MM):'
+    '--range[月份范围]:range (YYYY.M-YYYY.M):'
     '*-i[Agent 数据目录，可重复传入]:directory:_directories'
+    '*--exclude-input[排除 Agent 数据目录，可重复传入]:directory:_directories'
     '--timezone[IANA 时区]:timezone:'
     '--day-start[统计日开始小时]:hour (0-23):'
     '--privacy[提示词隐私模式]:mode:(full redacted metrics-only)'
@@ -52,7 +54,7 @@ const bash = String.raw`_vibe_wrapped_completion() {
     COMPREPLY=( $(compgen -W "build render serve" -- "$current") )
     return
   fi
-  options="--out --year --month -i --timezone --day-start --privacy --exclude-word --git --clean --help"
+  options="--out --year --month --range -i --exclude-input --timezone --day-start --privacy --exclude-word --git --clean --help"
   [[ $command != build ]] && options="$options --theme"
   [[ $command == serve ]] && options="$options --host --port"
   COMPREPLY=( $(compgen -W "$options" -- "$current") )

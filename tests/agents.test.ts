@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { detectAgentInputs } from "../src/agents.js";
+import { detectAgentInputs, selectAgentInputPaths } from "../src/input/agents.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -25,5 +25,24 @@ describe("detectAgentInputs", () => {
     expect(inputs).toEqual([{ type: "codex", root: codex }]);
     expect(errors).toHaveLength(1);
     expect(errors[0].startsWith(`${unknown}:`)).toBe(true);
+  });
+
+  it("detects Claude Code and OpenCode roots", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vibe-agents-"));
+    temporaryDirectories.push(root);
+    const claude = join(root, "claude");
+    const opencode = join(root, "opencode");
+    await mkdir(join(claude, "projects"), { recursive: true });
+    await mkdir(join(claude, "sessions"));
+    await mkdir(opencode);
+    await writeFile(join(opencode, "opencode.db"), "");
+    expect(await detectAgentInputs([claude, opencode], () => {})).toEqual([
+      { type: "claude-code", root: claude },
+      { type: "opencode", root: opencode },
+    ]);
+  });
+
+  it("deduplicates explicit inputs and applies exact root exclusions", () => {
+    expect(selectAgentInputPaths(["/tmp/a", "/tmp/a", "/tmp/b"], ["/tmp/a"])).toEqual(["/tmp/b"]);
   });
 });
