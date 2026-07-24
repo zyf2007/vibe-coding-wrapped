@@ -3,6 +3,7 @@ import { activeMinute, codingDay, enumerateDays, localDateTime, zonedParts } fro
 import { analyzeGit } from "./git.js";
 import { DEFAULT_STOPWORDS, STOPWORD_VERSION } from "./stopwords.js";
 import { displayProject, median, metric, percentile, redactText, sortObject, stableId, unavailable } from "../domain/utils.js";
+import { createAnalysisContext, cwdForTurn, factReference } from "./context.js";
 
 const segmenters = new Map<string, Intl.Segmenter>();
 
@@ -95,9 +96,11 @@ function countBy<T>(items: T[], key: (item: T) => string): Record<string, number
 }
 
 export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean): Promise<Bundle> {
+  const gitPromise = analyzeGit(facts, scope, gitEnabled);
   facts.prompts.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id));
   facts.turns.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id));
   facts.tools.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id));
+  const context = createAnalysisContext(facts);
 
   const dayRows = new Map<string, { prompts: number; turns: number; toolCalls: number; totalTokens: number; fileChanges: number; projects: Set<string>; events: Array<{ at: string; type: string }> }>();
   for (const day of enumerateDays(scope.period)) dayRows.set(day, { prompts: 0, turns: 0, toolCalls: 0, totalTokens: 0, fileChanges: 0, projects: new Set(), events: [] });
@@ -228,7 +231,7 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
   selectNotable("most_structured", "structuredScore");
   selectNotable("most_context_rich", "contextScore");
   selectNotable("keyword_dense", "keywordScore");
-  const promptsByModel = Object.entries(countBy(facts.prompts, (item) => modelId(item.modelId))).map(([id, count]) => ({ modelId: id, prompts: count, medianChars: median(facts.prompts.filter((item) => modelId(item.modelId) === id).map((item) => [...item.text].length)) })).sort((a, b) => b.prompts - a.prompts || a.modelId.localeCompare(b.modelId));
+  const promptsByModel = [...context.promptsByModel.entries()].map(([id, items]) => ({ modelId: id, prompts: items.length, medianChars: median(items.map((item) => [...item.text].length)) })).sort((a, b) => b.prompts - a.prompts || a.modelId.localeCompare(b.modelId));
   const firstPrompt = facts.prompts[0];
   const prompts = {
     firstInPeriod: firstPrompt ? metric("prompts.first_in_period", { occurredAt: firstPrompt.occurredAt, localDateTime: localDateTime(firstPrompt.occurredAt, scope.timezone), codingDay: codingDay(firstPrompt.occurredAt, scope.timezone, scope.dayStartHour), excerpt: excerpt(firstPrompt.text, scope), charCount: [...firstPrompt.text].length, projectId: projectId(firstPrompt.cwd) }, 1, 1, "direct") : unavailable("prompts.first_in_period", "insufficient_data", "no_prompts"),
@@ -264,20 +267,13 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
   facts.prompts.forEach((item) => ensureProject(item.cwd, item.occurredAt).prompts += 1);
   facts.turns.forEach((item) => ensureProject(item.cwd, item.occurredAt).turns += 1);
   facts.tools.forEach((item) => ensureProject(item.cwd, item.occurredAt).toolCalls += 1);
-  const turnCwd = new Map(facts.turns.map((item) => [`${item.sessionId}:${item.id}`, item.cwd]));
-  facts.tokens.forEach((item) => ensureProject(turnCwd.get(`${item.sessionId}:${stableId("turn", `${item.sessionId}:${item.turnId}`)}`), item.occurredAt).totalTokens += item.total);
-  facts.fileChanges.forEach((item) => ensureProject(facts.tools.find((tool) => tool.callId === item.callId)?.cwd, item.occurredAt).filesChanged += 1);
+  facts.tokens.forEach((item) => ensureProject(cwdForTurn(context, item.sessionId, item.turnId), item.occurredAt).totalTokens += item.total);
+  facts.fileChanges.forEach((item) => ensureProject(context.toolByCall.get(factReference(item.sessionId, item.callId))?.cwd, item.occurredAt).filesChanged += 1);
   const projectItems = [...projectMap.values()].sort((a, b) => b.prompts - a.prompts || b.totalTokens - a.totalTokens || a.projectId.localeCompare(b.projectId)).map((item, rank) => ({ rank: rank + 1, ...item }));
   const projects = { items: metric("projects.items", projectItems, projectItems.length, 1), timeline: projectItems.map((item) => ({ projectId: item.projectId, firstAt: item.firstAt, lastAt: item.lastAt, prompts: item.prompts })), byDay: Object.fromEntries(calendarDays.map((day) => [day.codingDay, day.projectIds])), crossSourceMerges: metric("projects.cross_source_merges", 0, projectItems.length, 1, "direct") };
 
-  const linkedToolCount = facts.tools.filter((item) => item.turnId && facts.prompts.some((prompt) => prompt.turnId === item.turnId)).length;
-  const toolsByTurn = new Map<string, typeof facts.tools>();
-  for (const tool of facts.tools) {
-    if (!tool.turnId) continue;
-    const list = toolsByTurn.get(tool.turnId) ?? [];
-    list.push(tool);
-    toolsByTurn.set(tool.turnId, list);
-  }
+  const linkedToolCount = facts.tools.reduce((count, item) => count + Number(Boolean(item.turnId && context.promptTurnKeys.has(factReference(item.sessionId, item.turnId)))), 0);
+  const toolsByTurn = context.toolsByTurn;
   const motifs = countBy([...toolsByTurn.values()].filter((items) => items.length >= 2), (items) => items.map((item) => item.category).join(" -> "));
   const mutationTurns = [...toolsByTurn.values()].filter((items) => items.some((item) => item.isMutation));
   const checkedMutationTurns = mutationTurns.filter((items) => {
@@ -285,16 +281,19 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
     return items.slice(firstMutation + 1).some((item) => item.isCheckInvocation);
   }).length;
   const outcomeTools = facts.tools.filter((item) => item.exitCode !== undefined);
-  const toolsByModel = Object.entries(countBy(facts.tools, (item) => modelId(item.modelId))).map(([id, count]) => ({ modelId: id, toolCalls: count, checkInvocations: facts.tools.filter((item) => modelId(item.modelId) === id && item.isCheckInvocation).length })).sort((a, b) => b.toolCalls - a.toolCalls || a.modelId.localeCompare(b.modelId));
+  const toolsByModel = [...context.toolsByModel.entries()].map(([id, items]) => ({ modelId: id, toolCalls: items.length, checkInvocations: items.filter((item) => item.isCheckInvocation).length })).sort((a, b) => b.toolCalls - a.toolCalls || a.modelId.localeCompare(b.modelId));
+  const checkInvocations = facts.tools.reduce((count, item) => count + Number(item.isCheckInvocation), 0);
+  const spawnCalls = facts.tools.reduce((count, item) => count + Number(item.name === "agent.delegate"), 0);
+  const waitCalls = facts.tools.reduce((count, item) => count + Number(item.name === "agent.wait"), 0);
   const tools = {
-    totals: metric("tools.totals", { calls: facts.tools.length, turnsWithTools: toolsByTurn.size, checkInvocations: facts.tools.filter((item) => item.isCheckInvocation).length }, facts.tools.length, 1, "direct"),
+    totals: metric("tools.totals", { calls: facts.tools.length, turnsWithTools: toolsByTurn.size, checkInvocations }, facts.tools.length, 1, "direct"),
     items: metric("tools.items", sortObject(countBy(facts.tools, (item) => item.name)).map((item, rank) => ({ rank: rank + 1, tool: item.id, count: item.count })), facts.tools.length, 1, "direct"),
     categories: metric("tools.categories", sortObject(countBy(facts.tools, (item) => item.category)).map((item, rank) => ({ rank: rank + 1, category: item.id, count: item.count })), facts.tools.length, 1),
     linkedPrompt: metric("tools.linked_prompt", { linkedCalls: linkedToolCount, totalCalls: facts.tools.length, medianCallsPerLinkedPrompt: median([...toolsByTurn.values()].map((items) => items.length)) }, facts.tools.length, facts.tools.length ? linkedToolCount / facts.tools.length : 0),
     sequenceMotifs: metric("tools.sequence_motifs", sortObject(motifs).slice(0, 20).map((item, rank) => ({ rank: rank + 1, sequence: item.id.split(" -> "), count: item.count })), toolsByTurn.size, facts.tools.length ? linkedToolCount / facts.tools.length : 0),
     postChangeChecks: metric("tools.post_change_checks", { checkedTurns: checkedMutationTurns, mutationTurns: mutationTurns.length, rate: mutationTurns.length ? checkedMutationTurns / mutationTurns.length : 0 }, mutationTurns.length, linkedToolCount / Math.max(1, facts.tools.length)),
     outcomes: metric("tools.outcomes", { exitCodes: sortObject(countBy(outcomeTools, (item) => String(item.exitCode))), observed: outcomeTools.length, total: facts.tools.length }, facts.tools.length, facts.tools.length ? outcomeTools.length / facts.tools.length : 0, "direct"),
-    subagents: metric("tools.subagents", { spawnCalls: facts.tools.filter((item) => item.name === "agent.delegate").length, waitCalls: facts.tools.filter((item) => item.name === "agent.wait").length }, facts.tools.length, 1, "direct"),
+    subagents: metric("tools.subagents", { spawnCalls, waitCalls }, facts.tools.length, 1, "direct"),
     byModel: toolsByModel,
   };
 
@@ -309,23 +308,31 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
   const totalAdded = facts.fileChanges.reduce((sum, item) => sum + item.added, 0);
   const totalDeleted = facts.fileChanges.reduce((sum, item) => sum + item.deleted, 0);
   const languages = [...languageMap.entries()].map(([language, value]) => ({ languageId: language, language, addedLines: value.added, deletedLines: value.deleted, files: value.files.size, share: totalAdded ? value.added / totalAdded : 0 })).sort((a, b) => b.addedLines - a.addedLines || a.language.localeCompare(b.language)).map((item, rank) => ({ rank: rank + 1, ...item }));
-  const changeTrend = Object.entries(countBy(facts.fileChanges, (item) => codingDay(item.occurredAt, scope.timezone, scope.dayStartHour))).map(([day, count]) => ({ codingDay: day, changes: count, addedLines: facts.fileChanges.filter((item) => codingDay(item.occurredAt, scope.timezone, scope.dayStartHour) === day).reduce((sum, item) => sum + item.added, 0) })).sort((a, b) => a.codingDay.localeCompare(b.codingDay));
+  const changesByDay = new Map<string, { changes: number; addedLines: number }>();
+  for (const item of facts.fileChanges) {
+    const day = codingDay(item.occurredAt, scope.timezone, scope.dayStartHour);
+    const row = changesByDay.get(day) ?? { changes: 0, addedLines: 0 };
+    row.changes += 1; row.addedLines += item.added; changesByDay.set(day, row);
+  }
+  const changeTrend = [...changesByDay.entries()].map(([codingDay, values]) => ({ codingDay, ...values })).sort((a, b) => a.codingDay.localeCompare(b.codingDay));
+  const filesPerMutationTurn = mutationTurns.map((items) => {
+    const paths = new Set<string>();
+    for (const tool of items) for (const change of context.changesByCall.get(factReference(tool.sessionId, tool.callId)) ?? []) paths.add(change.path);
+    return paths.size;
+  });
   const code = {
     totals: metric("code.totals", { changes: facts.fileChanges.length, files: new Set(facts.fileChanges.map((item) => item.path)).size, addedLines: totalAdded, deletedLines: totalDeleted }, facts.fileChanges.length, 1, "direct"),
     trend: metric("code.trend", changeTrend, facts.fileChanges.length, 1),
     attributionCoverage: metric("code.attribution_coverage", { structuredChanges: facts.fileChanges.length, toolCalls: facts.tools.length, rate: facts.tools.length ? facts.fileChanges.length / facts.tools.length : 0 }, facts.tools.length, 1),
-    changeRadius: metric("code.change_radius", { medianFilesPerMutationTurn: median(mutationTurns.map((items) => new Set(facts.fileChanges.filter((change) => items.some((item) => item.callId === change.callId)).map((item) => item.path)).size)) }, mutationTurns.length, 1),
+    changeRadius: metric("code.change_radius", { medianFilesPerMutationTurn: median(filesPerMutationTurn) }, mutationTurns.length, 1),
     languages: metric("code.languages", languages, totalAdded, totalAdded ? (totalAdded - (languageMap.get("Unknown")?.added ?? 0)) / totalAdded : 0),
     languageByProject: [],
-    byModel: Object.entries(countBy(facts.fileChanges, (item) => modelId(item.modelId))).map(([id, count]) => ({ modelId: id, changes: count, addedLines: facts.fileChanges.filter((item) => modelId(item.modelId) === id).reduce((sum, item) => sum + item.added, 0) })).sort((a, b) => b.addedLines - a.addedLines),
+    byModel: [...context.changesByModel.entries()].map(([id, items]) => ({ modelId: id, changes: items.length, addedLines: items.reduce((sum, item) => sum + item.added, 0) })).sort((a, b) => b.addedLines - a.addedLines),
   };
 
-  const modelCounts = countBy(facts.turns, (item) => modelId(item.modelId));
-  const modelItems = Object.entries(modelCounts).map(([id, count]) => ({ modelId: id, displayName: id, turns: count, sessions: new Set(facts.turns.filter((item) => modelId(item.modelId) === id).map((item) => item.sessionId)).size })).sort((a, b) => b.turns - a.turns || a.modelId.localeCompare(b.modelId)).map((item, rank) => ({ rank: rank + 1, ...item }));
+  const modelItems = [...context.turnsByModel.entries()].map(([id, items]) => ({ modelId: id, displayName: id, turns: items.length, sessions: new Set(items.map((item) => item.sessionId)).size })).sort((a, b) => b.turns - a.turns || a.modelId.localeCompare(b.modelId)).map((item, rank) => ({ rank: rank + 1, ...item }));
   const transitions: Record<string, number> = {};
-  const turnsBySession = new Map<string, typeof facts.turns>();
-  for (const turn of facts.turns) { const list = turnsBySession.get(turn.sessionId) ?? []; list.push(turn); turnsBySession.set(turn.sessionId, list); }
-  for (const list of turnsBySession.values()) for (let index = 1; index < list.length; index += 1) if (list[index - 1].modelId !== list[index].modelId) { const key = `${list[index - 1].modelId} -> ${list[index].modelId}`; transitions[key] = (transitions[key] ?? 0) + 1; }
+  for (const list of context.turnsBySession.values()) for (let index = 1; index < list.length; index += 1) if (list[index - 1].modelId !== list[index].modelId) { const key = `${list[index - 1].modelId} -> ${list[index].modelId}`; transitions[key] = (transitions[key] ?? 0) + 1; }
   const modelByHour = new Map<string, Record<string, number>>();
   const modelByWeekday = new Map<string, Record<string, number>>();
   for (const turn of facts.turns) {
@@ -401,7 +408,7 @@ export async function analyze(facts: FactSet, scope: Scope, gitEnabled: boolean)
     memoryMoments: metric("records.memory_moments", memoryMoments, facts.prompts.length, 1, "direct"),
   };
 
-  const git = await analyzeGit(facts, scope, gitEnabled);
+  const git = await gitPromise;
   const featuredFacts = [
     { id: "active-days", metricRef: "overview.totals.activeDays", factKind: "count", value: metric("overview.active_days", activeDays.length, facts.prompts.length, 1), messageKey: "active_days" },
     { id: "longest-streak", metricRef: "records.longestStreak", factKind: "record", value: records.longestStreak, messageKey: "longest_streak" },

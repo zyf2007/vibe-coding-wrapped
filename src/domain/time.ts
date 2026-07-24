@@ -3,6 +3,9 @@ import type { Period } from "./types.js";
 type ZonedParts = { year: number; month: number; day: number; hour: number; minute: number; weekday: string };
 
 const formatters = new Map<string, Intl.DateTimeFormat>();
+const zonedMinuteCache = new Map<string, ZonedParts>();
+const codingBoundaryCache = new Map<string, number>();
+const MAX_ZONED_MINUTES = 100_000;
 
 function formatter(timezone: string): Intl.DateTimeFormat {
   let value = formatters.get(timezone);
@@ -23,11 +26,15 @@ function formatter(timezone: string): Intl.DateTimeFormat {
 }
 
 export function zonedParts(instant: string | Date, timezone: string): ZonedParts {
+  const date = new Date(instant);
+  const cacheKey = `${timezone}\0${Math.floor(date.getTime() / 60_000)}`;
+  const cached = zonedMinuteCache.get(cacheKey);
+  if (cached) return cached;
   const values: Record<string, string> = {};
-  for (const part of formatter(timezone).formatToParts(new Date(instant))) {
+  for (const part of formatter(timezone).formatToParts(date)) {
     if (part.type !== "literal") values[part.type] = part.value;
   }
-  return {
+  const result = {
     year: Number(values.year),
     month: Number(values.month),
     day: Number(values.day),
@@ -35,6 +42,9 @@ export function zonedParts(instant: string | Date, timezone: string): ZonedParts
     minute: Number(values.minute),
     weekday: values.weekday,
   };
+  zonedMinuteCache.set(cacheKey, result);
+  if (zonedMinuteCache.size > MAX_ZONED_MINUTES) zonedMinuteCache.delete(zonedMinuteCache.keys().next().value!);
+  return result;
 }
 
 export function dateKey(year: number, month: number, day: number): string {
@@ -46,6 +56,36 @@ export function codingDay(instant: string | Date, timezone: string, dayStartHour
   if (parts.hour >= dayStartHour) return dateKey(parts.year, parts.month, parts.day);
   const previous = new Date(Date.UTC(parts.year, parts.month - 1, parts.day - 1));
   return dateKey(previous.getUTCFullYear(), previous.getUTCMonth() + 1, previous.getUTCDate());
+}
+
+function nextDate(day: string): string {
+  const value = new Date(`${day}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + 1);
+  return dateKey(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate());
+}
+
+export function codingDayBoundary(day: string, timezone: string, dayStartHour: number): number {
+  const cacheKey = `${timezone}\0${dayStartHour}\0${day}`;
+  const cached = codingBoundaryCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const approximate = Date.parse(`${day}T${String(dayStartHour).padStart(2, "0")}:00:00Z`);
+  let low = Math.floor((approximate - 36 * 3_600_000) / 60_000);
+  let high = Math.ceil((approximate + 36 * 3_600_000) / 60_000);
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (codingDay(new Date(middle * 60_000), timezone, dayStartHour) < day) low = middle + 1;
+    else high = middle;
+  }
+  const boundary = low * 60_000;
+  codingBoundaryCache.set(cacheKey, boundary);
+  return boundary;
+}
+
+export function periodEpochBounds(period: Period, timezone: string, dayStartHour: number): { startInclusive: number; endExclusive: number } {
+  return {
+    startInclusive: codingDayBoundary(period.startCodingDay, timezone, dayStartHour),
+    endExclusive: codingDayBoundary(nextDate(period.endCodingDay), timezone, dayStartHour),
+  };
 }
 
 export function activeMinute(instant: string | Date, timezone: string, dayStartHour: number): number {

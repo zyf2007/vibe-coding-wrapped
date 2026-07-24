@@ -2,11 +2,14 @@ import { createReadStream } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { emptyFacts } from "../../domain/facts.js";
+import { emptyFacts, mergeFactSets } from "../../domain/facts.js";
 import { commandFamily, isCheckCommand, normalizeTool } from "../../domain/tools.js";
-import { codingDay, inPeriod } from "../../domain/time.js";
+import { periodEpochBounds } from "../../domain/time.js";
 import type { FactSet, FileChangeFact, Scope, ToolFact } from "../../domain/types.js";
 import { hash, languageForPath, stableId } from "../../domain/utils.js";
+import { factCacheKey, readFactCache, writeFactCache } from "../../storage/fact-cache.js";
+import { mapConcurrent } from "../concurrency.js";
+import { parseJsonlWithWorkers, type JsonlWorkerTask } from "../workers/fact-worker-pool.js";
 
 async function walk(directory: string, output: string[]): Promise<void> {
   let entries;
@@ -43,40 +46,34 @@ function fileChange(tool: ToolFact, rawName: string, input: any): FileChangeFact
   return { id: stableId("change", `${tool.id}:${path}`), callId: tool.callId, sessionId: tool.sessionId, turnId: tool.turnId, occurredAt: tool.occurredAt, path, ...counts, language: languageForPath(path), modelId: tool.modelId };
 }
 
-export async function readClaudeFacts(roots: string[], scope: Scope, onProgress?: (message: string) => void): Promise<FactSet> {
+export async function parseClaudeFile(file: string, root: string, sourceId: string, scope: Scope, knownFileSize?: number): Promise<FactSet> {
   const facts = emptyFacts();
+  facts.sources.push({ id: sourceId, agentType: "claude-code", root });
   const seen = { sessions: new Set<string>(), turns: new Set<string>(), prompts: new Set<string>(), tokens: new Set<string>(), tools: new Set<string>(), changes: new Set<string>() };
-  for (const inputRoot of roots) {
-    const root = resolve(inputRoot);
-    const sourceId = stableId("source", root);
-    facts.sources.push({ id: sourceId, agentType: "claude-code", root });
-    const files: string[] = [];
-    await walk(join(root, "projects"), files);
-    files.sort();
-    onProgress?.(`Scanning ${files.length} Claude Code session files from ${root}`);
-    for (const file of files) {
-      const info = await stat(file);
-      facts.scannedFiles += 1;
-      facts.scannedBytes += info.size;
-      let rawSessionId = basename(file, ".jsonl");
-      let sessionId = stableId("session", `claude-code:${rawSessionId}`);
-      let cwd: string | undefined;
-      let currentTurn: string | undefined;
-      let currentModel: string | undefined;
-      let lineNumber = 0;
-      const tools = new Map<string, ToolFact>();
-      const reader = createInterface({ input: createReadStream(file), crlfDelay: Infinity });
-      for await (const line of reader) {
+  facts.scannedFiles = 1;
+  facts.scannedBytes = knownFileSize ?? (await stat(file)).size;
+  let rawSessionId = basename(file, ".jsonl");
+  let sessionId = stableId("session", `claude-code:${rawSessionId}`);
+  let cwd: string | undefined;
+  let currentTurn: string | undefined;
+  let currentModel: string | undefined;
+  let lineNumber = 0;
+  const periodBounds = periodEpochBounds(scope.period, scope.timezone, scope.dayStartHour);
+  const tools = new Map<string, ToolFact>();
+  const reader = createInterface({ input: createReadStream(file), crlfDelay: Infinity });
+  for await (const line of reader) {
         lineNumber += 1;
         if (!line.trim()) continue;
         let event: any;
         try { event = JSON.parse(line); } catch { facts.diagnostics.push({ sourceId, file: basename(file), code: "invalid_json", line: lineNumber }); continue; }
         const timestamp = typeof event.timestamp === "string" ? event.timestamp : undefined;
-        if (!timestamp || Number.isNaN(Date.parse(timestamp))) continue;
+        if (!timestamp) continue;
+        const timestampMs = Date.parse(timestamp);
+        if (Number.isNaN(timestampMs)) continue;
         rawSessionId = String(event.sessionId ?? rawSessionId);
         sessionId = stableId("session", `claude-code:${rawSessionId}`);
         cwd = typeof event.cwd === "string" ? event.cwd : cwd;
-        const inside = inPeriod(codingDay(timestamp, scope.timezone, scope.dayStartHour), scope.period);
+        const inside = timestampMs >= periodBounds.startInclusive && timestampMs < periodBounds.endExclusive;
         if (inside && !seen.sessions.has(sessionId)) {
           seen.sessions.add(sessionId);
           facts.sessions.push({ id: sessionId, occurredAt: timestamp, cwd, sourceId });
@@ -137,8 +134,46 @@ export async function readClaudeFacts(roots: string[], scope: Scope, onProgress?
           const change = fileChange(tool, rawName, input);
           if (change && !seen.changes.has(change.id)) { seen.changes.add(change.id); facts.fileChanges.push(change); }
         }
-      }
-    }
   }
   return facts;
+}
+
+export async function readClaudeFacts(roots: string[], scope: Scope, onProgress?: (message: string) => void, options: { bypassCache?: boolean } = {}): Promise<FactSet> {
+  const fragments: FactSet[] = [];
+  let cacheHits = 0;
+  for (const inputRoot of roots) {
+    const root = resolve(inputRoot);
+    const sourceId = stableId("source", root);
+    const source = emptyFacts();
+    source.sources.push({ id: sourceId, agentType: "claude-code", root });
+    fragments.push(source);
+    const files: string[] = [];
+    await walk(join(root, "projects"), files);
+    files.sort();
+    onProgress?.(`Scanning ${files.length} Claude Code session files from ${root}`);
+    const candidates = await mapConcurrent(files, 16, async (file) => {
+      const info = await stat(file);
+      const cacheKey = factCacheKey("claude-code", 1, scope, file, [{ path: file, size: info.size, mtimeMs: info.mtimeMs }]);
+      const cached = options.bypassCache ? undefined : await readFactCache(cacheKey);
+      return { file, fileSize: info.size, cacheKey, cached };
+    });
+    const reused = candidates.filter((candidate) => candidate.cached);
+    const misses = candidates.filter((candidate) => !candidate.cached);
+    cacheHits += reused.length;
+    fragments.push(...reused.map((candidate) => candidate.cached!));
+    if (reused.length) onProgress?.(`Claude Code cache: reused ${reused.length}/${files.length} session files from ${root}`);
+    if (!misses.length) continue;
+
+    const tasks: JsonlWorkerTask[] = misses.map(({ file, fileSize }) => ({ file, fileSize, root, sourceId, scope }));
+    onProgress?.(`Parsing ${misses.length} Claude Code session files with up to ${Math.min(tasks.length, 4)} workers`);
+    const parsed = await parseJsonlWithWorkers("claude-code", tasks, (completed, total) => {
+      if (completed % 25 === 0 || completed === total) onProgress?.(`Parsed ${completed}/${total} uncached Claude Code files from ${root}`);
+    });
+    await mapConcurrent(misses, 16, async (candidate, index) => {
+      await writeFactCache(candidate.cacheKey, parsed.facts[index]);
+    });
+    fragments.push(...parsed.facts);
+  }
+  if (cacheHits && roots.length > 1) onProgress?.(`Claude Code cache total: ${cacheHits} session files reused`);
+  return mergeFactSets(fragments);
 }

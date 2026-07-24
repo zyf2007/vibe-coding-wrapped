@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codingDay, createPeriod, createRangePeriod, enumerateDays, inPeriod } from "../src/domain/time.js";
+import { codingDay, codingDayBoundary, createPeriod, createRangePeriod, enumerateDays, inPeriod, periodEpochBounds } from "../src/domain/time.js";
 
 describe("coding day", () => {
   it("uses 04:00 as the default-style boundary", () => {
@@ -10,6 +10,14 @@ describe("coding day", () => {
   it("handles DST through IANA timezone parts", () => {
     expect(codingDay("2026-03-08T06:30:00Z", "America/New_York", 4)).toBe("2026-03-07");
     expect(codingDay("2026-03-08T08:30:00Z", "America/New_York", 4)).toBe("2026-03-08");
+  });
+
+  it("precomputes UTC boundaries while preserving timezone and DST semantics", () => {
+    const shanghai = periodEpochBounds(createPeriod("month", "2026-07"), "Asia/Shanghai", 4);
+    expect(new Date(shanghai.startInclusive).toISOString()).toBe("2026-06-30T20:00:00.000Z");
+    expect(new Date(shanghai.endExclusive).toISOString()).toBe("2026-07-31T20:00:00.000Z");
+    expect(new Date(codingDayBoundary("2026-01-15", "America/New_York", 4)).toISOString()).toBe("2026-01-15T09:00:00.000Z");
+    expect(new Date(codingDayBoundary("2026-07-15", "America/New_York", 4)).toISOString()).toBe("2026-07-15T08:00:00.000Z");
   });
 
   it("accepts an inclusive calendar-month range", () => {

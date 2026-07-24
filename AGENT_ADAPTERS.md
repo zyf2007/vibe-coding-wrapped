@@ -18,6 +18,12 @@ Adapters may parse different storage formats, but they must emit the facts in `s
 
 Prompt-like synthetic records, local command output, tool results, and system metadata are excluded. Token fields retain input, cached input, output, reasoning, and total counts where the source supplies them. Missing fields remain zero rather than being inferred.
 
+## Parsing and cache contract
+
+Source timestamps remain UTC instants. At the start of a read, the configured coding-day boundaries are projected to UTC once and events are filtered with numeric epoch comparisons. The unified analysis layer performs the local-day, hour, and weekday projection needed by JSON metrics; themes do not reinterpret report time semantics. Boundary projection supports IANA timezone offset changes such as daylight saving time.
+
+Codex and Claude Code cache one normalized `FactSet` fragment per session file. Fingerprints include parser version, report scope, path, size, and modification time, so only changed sessions are parsed again. Cold JSONL misses use a bounded worker pool; cache metadata and writes use bounded asynchronous concurrency. OpenCode uses a period-bounded SQLite query and snapshot cache, while legacy JSON uses per-session fragments. `--clean` bypasses reads from all of these caches and refreshes them.
+
 ## Canonical tool names
 
 The stable report vocabulary is defined in `src/domain/tools.ts`. `ToolFact.name` is canonical and `ToolFact.rawName` retains the source value.
@@ -56,6 +62,6 @@ Structured patches and edits can contribute file paths and changed-line counts. 
 2. Parse the source into a `FactSet` without adding Agent-specific report fields.
 3. Normalize tools through `normalizeTool()` and retain `rawName`.
 4. Namespace session IDs with the Agent type and raw session ID, not the input path, so copied logs deduplicate across roots. Keep the root only in source provenance.
-5. Filter timestamps using the configured timezone and 4 AM-style coding-day boundary.
+5. Keep event timestamps as UTC instants and filter them through the precomputed configured coding-day boundaries.
 6. Add fixtures for prompts, models, tokens, tools, tool outcomes, and structured file changes.
 7. Verify a combined report proves equivalent tools share one canonical ranking.

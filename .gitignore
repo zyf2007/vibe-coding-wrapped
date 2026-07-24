@@ -3,6 +3,7 @@ dist/
 .cache/
 coverage/
 output/
+vibe-wrapped-*/
 *.log
 .DS_Store
 IMPLEMENTATION.md

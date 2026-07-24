@@ -3,11 +3,13 @@ import { readdir, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { FactSet, FileChangeFact, PromptFact, Scope, ToolFact } from "../../domain/types.js";
-import { emptyFacts } from "../../domain/facts.js";
+import { emptyFacts, mergeFactSets } from "../../domain/facts.js";
 import { commandFamily, isCheckCommand, normalizeTool, parseExitCode } from "../../domain/tools.js";
-import { codingDay, inPeriod } from "../../domain/time.js";
+import { periodEpochBounds } from "../../domain/time.js";
 import { hash, languageForPath, stableId } from "../../domain/utils.js";
-import { readFactCache, writeFactCache } from "../../storage/fact-cache.js";
+import { factCacheKey, readFactCache, writeFactCache } from "../../storage/fact-cache.js";
+import { mapConcurrent } from "../concurrency.js";
+import { parseJsonlWithWorkers, type JsonlWorkerTask } from "../workers/fact-worker-pool.js";
 
 type RawEvent = { timestamp?: string; type?: string; payload?: Record<string, any> };
 
@@ -117,52 +119,24 @@ function extractFileChanges(tool: ToolFact, input: string): FileChangeFact[] {
   return result;
 }
 
-export async function readCodexFacts(roots: string[], scope: Scope, onProgress?: (message: string) => void, options: { bypassCache?: boolean } = {}): Promise<FactSet> {
-  const discovered = new Map<string, string[]>();
-  const fingerprints: string[] = [];
-  for (const inputRoot of roots) {
-    const root = resolve(inputRoot);
-    const files = await discoverFiles(root, scope);
-    discovered.set(root, files);
-    for (const file of files) {
-      const info = await stat(file);
-      fingerprints.push(`${file}\0${info.size}\0${info.mtimeMs}`);
-    }
-  }
-  const cacheKey = hash(JSON.stringify({ version: 2, roots: roots.map((root) => resolve(root)).sort(), period: scope.period, timezone: scope.timezone, dayStartHour: scope.dayStartHour, fingerprints: fingerprints.sort() }));
-  if (!options.bypassCache) {
-    const cached = await readFactCache(cacheKey);
-    if (cached) {
-      onProgress?.(`Fact cache hit: ${cacheKey.slice(0, 12)}`);
-      return cached;
-    }
-  }
-
+export async function parseCodexFile(file: string, root: string, sourceId: string, scope: Scope, knownFileSize?: number): Promise<FactSet> {
   const facts = emptyFacts();
+  facts.sources.push({ id: sourceId, agentType: "codex", root });
   const seen = { sessions: new Set<string>(), turns: new Set<string>(), prompts: new Set<string>(), tokens: new Set<string>(), tools: new Set<string>(), changes: new Set<string>() };
   const toolByCallId = new Map<string, ToolFact>();
   const turnModels = new Map<string, { modelId: string; effort?: string; cwd?: string }>();
-
-  for (const inputRoot of roots) {
-    const root = resolve(inputRoot);
-    const sourceId = stableId("source", root);
-    facts.sources.push({ id: sourceId, agentType: "codex", root });
-    const files = discovered.get(root) ?? [];
-    onProgress?.(`Scanning ${files.length} candidate files from ${root}`);
-    for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
-      const file = files[fileIndex];
-      const info = await stat(file);
-      facts.scannedFiles += 1;
-      facts.scannedBytes += info.size;
-      let sessionId = stableId("session", `${sourceId}:${file}`);
-      let sessionCwd: string | undefined;
-      let currentTurn: string | undefined;
-      let currentModel: string | undefined;
-      let pendingPrompt: PromptFact | undefined;
-      let previousTotal = { input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
-      let lineNumber = 0;
-      const reader = createInterface({ input: createReadStream(file), crlfDelay: Infinity });
-      for await (const line of reader) {
+  facts.scannedFiles = 1;
+  facts.scannedBytes = knownFileSize ?? (await stat(file)).size;
+  let sessionId = stableId("session", `${sourceId}:${file}`);
+  let sessionCwd: string | undefined;
+  let currentTurn: string | undefined;
+  let currentModel: string | undefined;
+  let pendingPrompt: PromptFact | undefined;
+  let previousTotal = { input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
+  let lineNumber = 0;
+  const periodBounds = periodEpochBounds(scope.period, scope.timezone, scope.dayStartHour);
+  const reader = createInterface({ input: createReadStream(file), crlfDelay: Infinity });
+  for await (const line of reader) {
         lineNumber += 1;
         if (!line.trim()) continue;
         let event: RawEvent;
@@ -173,15 +147,17 @@ export async function readCodexFacts(roots: string[], scope: Scope, onProgress?:
           continue;
         }
         const timestamp = event.timestamp;
-        if (!timestamp || Number.isNaN(Date.parse(timestamp))) continue;
+        if (!timestamp) continue;
+        const timestampMs = Date.parse(timestamp);
+        if (Number.isNaN(timestampMs)) continue;
+        const insidePeriod = timestampMs >= periodBounds.startInclusive && timestampMs < periodBounds.endExclusive;
         const payload = event.payload ?? {};
 
         if (event.type === "session_meta") {
           sessionId = String(payload.id ?? payload.session_id ?? sessionId);
           sessionCwd = typeof payload.cwd === "string" ? payload.cwd : sessionCwd;
           const id = stableId("session", sessionId);
-          const sessionDay = codingDay(timestamp, scope.timezone, scope.dayStartHour);
-          if (inPeriod(sessionDay, scope.period) && !seen.sessions.has(id)) {
+          if (insidePeriod && !seen.sessions.has(id)) {
             seen.sessions.add(id);
             facts.sessions.push({ id, occurredAt: timestamp, cwd: sessionCwd, sourceId });
           }
@@ -196,8 +172,7 @@ export async function readCodexFacts(roots: string[], scope: Scope, onProgress?:
           turnModels.set(currentTurn, { modelId: currentModel, effort, cwd: sessionCwd });
           if (pendingPrompt && !pendingPrompt.turnId) pendingPrompt.turnId = currentTurn;
           const id = stableId("turn", `${sessionId}:${currentTurn}`);
-          const turnDay = codingDay(timestamp, scope.timezone, scope.dayStartHour);
-          if (inPeriod(turnDay, scope.period) && !seen.turns.has(id)) {
+          if (insidePeriod && !seen.turns.has(id)) {
             seen.turns.add(id);
             facts.turns.push({ id, sessionId, occurredAt: timestamp, cwd: sessionCwd, modelId: currentModel, effort });
           }
@@ -210,8 +185,7 @@ export async function readCodexFacts(roots: string[], scope: Scope, onProgress?:
           continue;
         }
 
-        const day = codingDay(timestamp, scope.timezone, scope.dayStartHour);
-        if (!inPeriod(day, scope.period)) continue;
+        if (!insidePeriod) continue;
 
         if (event.type === "event_msg" && payload.type === "user_message" && typeof payload.message === "string") {
           const text = normalizePrompt(payload.message);
@@ -283,9 +257,6 @@ export async function readCodexFacts(roots: string[], scope: Scope, onProgress?:
           const tool = toolByCallId.get(callId);
           if (tool) tool.exitCode = parseExitCode(payload.output);
         }
-      }
-      if ((fileIndex + 1) % 25 === 0) onProgress?.(`Parsed ${fileIndex + 1}/${files.length} files from ${root}`);
-    }
   }
 
   for (const prompt of facts.prompts) {
@@ -300,7 +271,44 @@ export async function readCodexFacts(roots: string[], scope: Scope, onProgress?:
     change.modelId = tool?.modelId;
   }
 
-  facts.sources = [...new Map(facts.sources.map((source) => [source.id, source])).values()].sort((a, b) => a.id.localeCompare(b.id));
-  await writeFactCache(cacheKey, facts);
   return facts;
+}
+
+export async function readCodexFacts(roots: string[], scope: Scope, onProgress?: (message: string) => void, options: { bypassCache?: boolean } = {}): Promise<FactSet> {
+  const fragments: FactSet[] = [];
+  let cacheHits = 0;
+  for (const inputRoot of roots) {
+    const root = resolve(inputRoot);
+    const sourceId = stableId("source", root);
+    const source = emptyFacts();
+    source.sources.push({ id: sourceId, agentType: "codex", root });
+    fragments.push(source);
+    const files = await discoverFiles(root, scope);
+    onProgress?.(`Scanning ${files.length} candidate files from ${root}`);
+    const candidates = await mapConcurrent(files, 16, async (file) => {
+      const info = await stat(file);
+      const cacheKey = factCacheKey("codex", 3, scope, file, [{ path: file, size: info.size, mtimeMs: info.mtimeMs }]);
+      const cached = options.bypassCache ? undefined : await readFactCache(cacheKey);
+      return { file, fileSize: info.size, cacheKey, cached };
+    });
+    const reused = candidates.filter((candidate) => candidate.cached);
+    const misses = candidates.filter((candidate) => !candidate.cached);
+    cacheHits += reused.length;
+    fragments.push(...reused.map((candidate) => candidate.cached!));
+    if (reused.length) onProgress?.(`Codex cache: reused ${reused.length}/${files.length} session files from ${root}`);
+    if (!misses.length) continue;
+
+    const workerTasks: JsonlWorkerTask[] = misses.map(({ file, fileSize }) => ({ file, fileSize, root, sourceId, scope }));
+    const expectedWorkers = Math.min(workerTasks.length, 4);
+    onProgress?.(`Parsing ${misses.length} Codex session files with up to ${expectedWorkers} workers`);
+    const parsed = await parseJsonlWithWorkers("codex", workerTasks, (completed, total) => {
+      if (completed % 25 === 0 || completed === total) onProgress?.(`Parsed ${completed}/${total} uncached Codex files from ${root}`);
+    });
+    await mapConcurrent(misses, 16, async (candidate, index) => {
+      await writeFactCache(candidate.cacheKey, parsed.facts[index]);
+    });
+    fragments.push(...parsed.facts);
+  }
+  if (cacheHits && roots.length > 1) onProgress?.(`Codex cache total: ${cacheHits} session files reused`);
+  return mergeFactSets(fragments);
 }

@@ -1,6 +1,6 @@
 {
   "name": "vibe-coding-wrapped",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Generate a private, static coding activity report from local Agent session logs.",
   "type": "module",
   "bin": {
