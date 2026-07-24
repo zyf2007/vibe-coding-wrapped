@@ -4,8 +4,8 @@
   "description": "Generate a private, static coding activity report from local Agent session logs.",
   "type": "module",
   "bin": {
-    "vibe-wrapped": "./dist/cli.js",
-    "vibe-coding-wrapped": "./dist/cli.js"
+    "vibe-wrapped": "dist/cli.js",
+    "vibe-coding-wrapped": "dist/cli.js"
   },
   "scripts": {
     "build": "node ./scripts/clean-dist.js && tsc -p tsconfig.json",
