@@ -150,7 +150,7 @@ function parseExitCode(output: unknown): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
-export async function readCodexFacts(roots: string[], scope: Scope, onProgress?: (message: string) => void): Promise<FactSet> {
+export async function readCodexFacts(roots: string[], scope: Scope, onProgress?: (message: string) => void, options: { bypassCache?: boolean } = {}): Promise<FactSet> {
   const discovered = new Map<string, string[]>();
   const fingerprints: string[] = [];
   for (const inputRoot of roots) {
@@ -166,14 +166,16 @@ export async function readCodexFacts(roots: string[], scope: Scope, onProgress?:
   const cacheDirectory = join(cacheBase, "vibe-coding-wrapped");
   const cacheKey = hash(JSON.stringify({ version: 1, roots: roots.map((root) => resolve(root)).sort(), period: scope.period, timezone: scope.timezone, dayStartHour: scope.dayStartHour, fingerprints: fingerprints.sort() }));
   const cacheFile = join(cacheDirectory, `${cacheKey}.json`);
-  try {
-    const cached = JSON.parse(await readFile(cacheFile, "utf8")) as FactSet;
-    if (cached && Array.isArray(cached.prompts) && Array.isArray(cached.tools)) {
-      onProgress?.(`Fact cache hit: ${cacheKey.slice(0, 12)}`);
-      return cached;
+  if (!options.bypassCache) {
+    try {
+      const cached = JSON.parse(await readFile(cacheFile, "utf8")) as FactSet;
+      if (cached && Array.isArray(cached.prompts) && Array.isArray(cached.tools)) {
+        onProgress?.(`Fact cache hit: ${cacheKey.slice(0, 12)}`);
+        return cached;
+      }
+    } catch {
+      // A missing or stale cache is a normal first-run condition.
     }
-  } catch {
-    // A missing or stale cache is a normal first-run condition.
   }
 
   const facts: FactSet = { sessions: [], turns: [], prompts: [], tokens: [], tools: [], fileChanges: [], diagnostics: [], scannedFiles: 0, scannedBytes: 0, sourceIds: [] };

@@ -1,16 +1,19 @@
 {
   "name": "vibe-coding-wrapped",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Generate a private, static Codex activity report from local session logs.",
   "type": "module",
   "bin": {
-    "vibe-wrapped": "./dist/cli.js"
+    "vibe-wrapped": "./dist/cli.js",
+    "vibe-coding-wrapped": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
-    "check": "tsc -p tsconfig.json --noEmit && vitest run"
+    "check": "tsc -p tsconfig.json --noEmit && vitest run",
+    "prepack": "npm run build",
+    "postinstall": "node ./scripts/install-completion.js"
   },
   "engines": {
     "node": ">=20"
@@ -18,8 +21,23 @@
   "files": [
     "dist",
     "themes",
+    "scripts",
     "README.md"
   ],
+  "keywords": [
+    "codex",
+    "wrapped",
+    "coding-analytics",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zyf2007/vibe-coding-wrapped.git"
+  },
+  "homepage": "https://github.com/zyf2007/vibe-coding-wrapped#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.17.0",

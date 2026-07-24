@@ -5,3 +5,4 @@ coverage/
 output/
 *.log
 .DS_Store
+IMPLEMENTATION.md
