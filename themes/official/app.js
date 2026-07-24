@@ -1,6 +1,7 @@
 const files = ["manifest", "overview", "activity", "prompts", "projects", "tools", "code", "models", "tokens", "git", "records", "provenance"];
 const number = new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 });
 const precise = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 });
+const tokenDecimal = new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false });
 const colors = ["#ef5b42", "#167d68", "#e5b52d", "#4b64b5", "#aa4d79", "#6d6b64", "#1f988b", "#d27d2d"];
 
 function value(metric, fallback = undefined) { return metric?.availability === "available" ? metric.value : fallback; }
@@ -8,6 +9,11 @@ function node(tag, className, text) { const element = document.createElement(tag
 function append(parent, ...children) { for (const child of children.flat()) if (child) parent.append(child); return parent; }
 function format(value) { return typeof value === "number" ? number.format(value) : value ?? "--"; }
 function percent(value) { return `${precise.format((value || 0) * 100)}%`; }
+function tokenAmount(value, total = false) {
+  const amount = Number(value) || 0; const root = node("div", `token-amount${total ? " token-total" : ""}`);
+  append(root, node(total ? "div" : "strong", total ? "hero-number" : "", `${tokenDecimal.format(amount / 1_000_000)}M`), node("small", "token-yi", `≈ ${tokenDecimal.format(amount / 100_000_000)} 亿`));
+  return root;
+}
 function dateText(value) { if (!value) return "--"; const [date, time] = value.split("T"); return `${date.slice(5).replace("-", "月")}日 ${time || ""}`; }
 
 function page(id, kicker, title, tone = "") {
@@ -30,6 +36,16 @@ function metricRow(items) {
   for (const [label, result] of items) {
     const item = node("div", "metric");
     append(item, node("strong", "", format(result)), node("span", "", label));
+    row.append(item);
+  }
+  return row;
+}
+
+function tokenMetricRow(items) {
+  const row = node("div", "metric-row token-metrics");
+  for (const [label, result] of items) {
+    const item = node("div", "metric");
+    append(item, tokenAmount(result), node("span", "", label));
     row.append(item);
   }
   return row;
@@ -160,7 +176,9 @@ function modelMap(bundle) {
 }
 
 function tokenJourney(bundle) {
-  const root = page("tokens", "CREATION / 04", "Token 旅程", "green"); const totals = value(bundle.tokens.totals, {}); root.append(node("div", "hero-number", format(totals.total || 0)), node("div", "hero-label", "total tokens"), metricRow([["输入", totals.input], ["缓存输入", totals.cachedInput], ["输出", totals.output], ["推理", totals.reasoning], ["缓存比例", percent(value(bundle.tokens.cacheRatio, 0))]])); return root;
+  const root = page("tokens", "CREATION / 04", "Token 旅程", "green"); const totals = value(bundle.tokens.totals, {});
+  root.append(tokenAmount(totals.total, true), node("div", "hero-label", "total tokens"), tokenMetricRow([["输入", totals.input], ["缓存输入", totals.cachedInput], ["缓存写入", totals.cacheWrite], ["输出", totals.output], ["推理", totals.reasoning]]));
+  foot(root, `缓存输入比例 ${percent(value(bundle.tokens.cacheRatio, 0))}`, bundle); return root;
 }
 
 function gitPulse(bundle) {

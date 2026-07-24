@@ -9,6 +9,7 @@ describe("completionScript", () => {
     expect(script).toContain("--clean[忽略已有 JSON");
     expect(script).toContain("--range[月份范围]");
     expect(script).toContain("--exclude-input[排除 Agent 数据目录");
+    expect(script).toContain("--bind[监听地址与端口");
   });
 
   it("supports bash and rejects unsupported shells", () => {

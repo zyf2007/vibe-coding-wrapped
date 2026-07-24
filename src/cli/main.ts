@@ -27,12 +27,13 @@ type Options = {
   clean: boolean;
   host: string;
   port: number;
+  bind?: string;
 };
 
 const usageText = `Usage:
   vibe-wrapped build  (--year YYYY | --month YYYY-MM | --range YYYY.M-YYYY.M) [-i PATH]... --out REPORT_DIR
   vibe-wrapped render [--year YYYY | --month YYYY-MM | --range YYYY.M-YYYY.M] [-i PATH]... [--clean] [--theme official|compact|PATH] --out REPORT_DIR
-  vibe-wrapped serve  [--year YYYY | --month YYYY-MM | --range YYYY.M-YYYY.M] [-i PATH]... [--clean] [--theme official|compact|PATH] [--host HOST] [--port PORT] [--out REPORT_DIR]
+  vibe-wrapped serve  [--year YYYY | --month YYYY-MM | --range YYYY.M-YYYY.M] [-i PATH]... [--clean] [--theme official|compact|PATH] [--bind HOST:PORT] [--out REPORT_DIR]
 
 Commands:
   build   Generate JSON only. Existing output is replaced with a Report Bundle.
@@ -55,6 +56,7 @@ Options:
   --git on|off               Git analysis (default: on)
   --host HOST                serve bind address (default: 127.0.0.1)
   --port PORT                serve port (default: 4173)
+  --bind HOST:PORT           Combined serve address, e.g. 0.0.0.0:5173
   -h, --help                 Show this help
   -v, --version              Show the package version`;
 
@@ -62,6 +64,17 @@ function fail(message?: string): never {
   if (message) console.error(message);
   console.error(usageText);
   process.exit(2);
+}
+
+export function parseBindAddress(input: string): { host: string; port: number } {
+  const value = input.trim();
+  const bracketed = value.match(/^\[([^\]]+)]:(\d+)$/);
+  const plain = value.match(/^([^:]+):(\d+)$/);
+  const match = bracketed ?? plain;
+  if (!match) throw new Error(`Invalid --bind value "${input}"; expected HOST:PORT`);
+  const port = Number(match[2]);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("--bind port must be an integer from 0 to 65535");
+  return { host: match[1], port };
 }
 
 function parse(argv: string[]): { command: "build" | "render" | "serve"; options: Options } {
@@ -80,6 +93,8 @@ function parse(argv: string[]): { command: "build" | "render" | "serve"; options
     host: "127.0.0.1",
     port: 4173,
   };
+  let hostSpecified = false;
+  let portSpecified = false;
   for (let index = 1; index < argv.length; index += 1) {
     const arg = argv[index];
     const next = () => argv[++index] ?? fail(`${arg} requires a value`);
@@ -106,12 +121,23 @@ function parse(argv: string[]): { command: "build" | "render" | "serve"; options
     else if (arg === "--host") {
       if (command !== "serve") fail("--host is only valid for serve");
       options.host = next();
+      hostSpecified = true;
     }
     else if (arg === "--port") {
       if (command !== "serve") fail("--port is only valid for serve");
       options.port = Number(next());
+      portSpecified = true;
+    }
+    else if (arg === "--bind") {
+      if (command !== "serve") fail("--bind is only valid for serve");
+      options.bind = next();
     }
     else fail(`Unknown option: ${arg}`);
+  }
+  if (options.bind && (hostSpecified || portSpecified)) fail("--bind cannot be combined with --host or --port");
+  if (options.bind) {
+    try { ({ host: options.host, port: options.port } = parseBindAddress(options.bind)); }
+    catch (error) { fail(error instanceof Error ? error.message : String(error)); }
   }
   return { command: command as "build" | "render" | "serve", options };
 }

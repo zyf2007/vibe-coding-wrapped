@@ -42,6 +42,9 @@ vibe-wrapped render --theme official --out ./wrapped-2026-07
 
 # Re-render an existing report and start a local preview server.
 vibe-wrapped serve --theme compact --port 4173 --out ./wrapped-2026-07
+
+# Bind to a LAN-accessible address with one option
+vibe-wrapped serve --bind 0.0.0.0:5173 --out ./wrapped-2026-07
 ```
 
 For the shortest path to a report, run `vibe-wrapped serve`. It discovers all existing standard Agent directories, reports the current calendar year, writes to `./vibe-wrapped-YYYY`, and starts the static preview. Use `--exclude-input ~/.claude` (repeatable) to omit a detected root.

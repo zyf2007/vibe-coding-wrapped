@@ -35,7 +35,7 @@ _vibe_wrapped() {
     '--git[是否读取关联仓库]:mode:(on off)'
   )
   render_options=( $common $generate_options '--theme[渲染主题名称或本地路径]:theme:(official compact)' )
-  serve_options=( $render_options '--host[监听地址]:host:' '--port[监听端口]:port:' )
+  serve_options=( $render_options '--bind[监听地址与端口，例如 0.0.0.0\:5173]:address:' '--host[监听地址]:host:' '--port[监听端口]:port:' )
 
   case $words[2] in
     build) _arguments -s $common $generate_options ;;
@@ -56,7 +56,7 @@ const bash = String.raw`_vibe_wrapped_completion() {
   fi
   options="--out --year --month --range -i --exclude-input --timezone --day-start --privacy --exclude-word --git --clean --help"
   [[ $command != build ]] && options="$options --theme"
-  [[ $command == serve ]] && options="$options --host --port"
+  [[ $command == serve ]] && options="$options --bind --host --port"
   COMPREPLY=( $(compgen -W "$options" -- "$current") )
 }
 complete -F _vibe_wrapped_completion vibe-wrapped vibe-coding-wrapped`;
