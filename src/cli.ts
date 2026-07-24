@@ -8,22 +8,22 @@ import { renderBundle } from "./render.js";
 import { createPeriod } from "./time.js";
 import type { Scope } from "./types.js";
 
-type Options = { year?: string; month?: string; timezone: string; dayStart: number; privacy: Scope["privacy"]; codexHomes: string[]; excludedWords: string[]; out?: string; git: boolean; positional: string[] };
+type Options = { year?: string; month?: string; timezone: string; dayStart: number; privacy: Scope["privacy"]; codexHomes: string[]; excludedWords: string[]; theme: string; out?: string; git: boolean; positional: string[] };
 
 function usage(): never {
   console.error(`Usage:
   vibe-wrapped generate (--year YYYY | --month YYYY-MM) [--codex-home PATH]... --out DIR
-  vibe-wrapped render BUNDLE_DIR --out DIR
-  vibe-wrapped build (--year YYYY | --month YYYY-MM) [--codex-home PATH]... --out DIR
+  vibe-wrapped render BUNDLE_DIR [--theme official|compact|PATH] --out DIR
+  vibe-wrapped build (--year YYYY | --month YYYY-MM) [--codex-home PATH]... [--theme official|compact|PATH] --out DIR
 
-Options: --timezone IANA --day-start 0..23 --privacy full|redacted|metrics-only --exclude-word WORD --git off`);
+Options: --timezone IANA --day-start 0..23 --privacy full|redacted|metrics-only --exclude-word WORD --theme NAME|PATH --git off`);
   process.exit(2);
 }
 
 function parse(argv: string[]): { command: string; options: Options } {
   const command = argv[0];
   if (!command || !["generate", "render", "build"].includes(command)) usage();
-  const options: Options = { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", dayStart: 4, privacy: "redacted", codexHomes: [], excludedWords: [], git: true, positional: [] };
+  const options: Options = { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", dayStart: 4, privacy: "redacted", codexHomes: [], excludedWords: [], theme: "official", git: true, positional: [] };
   for (let index = 1; index < argv.length; index += 1) {
     const arg = argv[index];
     const next = () => argv[++index] ?? usage();
@@ -34,6 +34,7 @@ function parse(argv: string[]): { command: string; options: Options } {
     else if (arg === "--privacy") options.privacy = next() as Scope["privacy"];
     else if (arg === "--codex-home") options.codexHomes.push(resolve(next()));
     else if (arg === "--exclude-word") options.excludedWords.push(next().normalize("NFKC").toLowerCase());
+    else if (arg === "--theme") options.theme = next();
     else if (arg === "--out") options.out = resolve(next());
     else if (arg === "--git") options.git = next() !== "off";
     else if (arg.startsWith("-")) usage();
@@ -62,13 +63,13 @@ async function main(): Promise<void> {
   if (command === "generate") return generate(options, options.out);
   if (command === "render") {
     if (options.positional.length !== 1) usage();
-    await renderBundle(options.positional[0], options.out);
+    await renderBundle(options.positional[0], options.out, options.theme);
     console.error(`Static report written to ${options.out}`);
     return;
   }
   const bundleOutput = `${options.out}-json`;
   await generate(options, bundleOutput);
-  await renderBundle(bundleOutput, options.out);
+  await renderBundle(bundleOutput, options.out, options.theme);
   console.error(`Static report written to ${options.out}; JSON retained at ${bundleOutput}`);
 }
 

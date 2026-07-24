@@ -121,11 +121,14 @@ vibe-wrapped generate --month 2026-07 --timezone Asia/Shanghai --day-start 4 --o
 vibe-wrapped render ./wrapped-2026 --theme official --out ./wrapped-2026-site
 vibe-wrapped build --year 2026 --theme official --out ./wrapped-2026-site
 vibe-wrapped build --month 2026-07 --theme official --out ./wrapped-2026-07-site
+vibe-wrapped render ./wrapped-2026 --theme compact --out ./wrapped-2026-blog
 ```
 
 `--year` 与 `--month` 互斥且必须二选一。`generate` 只生成 Report Bundle；`render` 只消费现有 bundle 并导出静态 HTML；`build` 是 `import + generate + render` 的便捷组合。渲染失败不能破坏已经生成的 JSON。
 
 静态站点输出可直接部署到 Nginx、Caddy、GitHub Pages、Cloudflare Pages、对象存储或任意静态文件服务，不需要 Node.js 后端。默认输出多文件站点以便缓存；额外支持 `--single-file` 将脚本、样式和 JSON 内嵌进一个 `index.html`，便于直接发送和归档。
+
+当前内置 `official` 和 `compact` 两套主题：`official` 是全屏翻页展示；`compact` 是连续滚动的紧凑单页，适合通过静态 URL 或 `iframe` 嵌入博客。两者读取完全相同的 Report Bundle。`--theme PATH` 也可加载包含 `index.html`、`app.js`、`style.css` 的受信任本地主题目录。
 
 ## 4. 总体架构
 

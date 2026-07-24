@@ -17,6 +17,18 @@ node dist/cli.js generate --month 2026-07 --out ./output/july-json
 node dist/cli.js render ./output/july-json --out ./output/july-site
 ```
 
+Choose a built-in theme with `--theme`:
+
+```bash
+# Full-screen, page-by-page presentation
+node dist/cli.js render ./output/july-json --theme official --out ./output/july-site
+
+# Compact single-page report for static blog embeds
+node dist/cli.js render ./output/july-json --theme compact --out ./output/july-blog
+```
+
+`build` accepts the same option. A trusted custom theme directory containing `index.html`, `app.js`, and `style.css` can also be passed to `--theme`. Both built-in themes use only relative assets and can be hosted without a backend.
+
 The built-in Chinese/English stopword list removes conversational filler from keyword statistics. Add personal exclusions with repeated options such as `--exclude-word 然后 --exclude-word 应该`.
 
 Use repeated `--codex-home PATH` arguments to merge logs copied from multiple devices. Events are deduplicated by stable content identity.
