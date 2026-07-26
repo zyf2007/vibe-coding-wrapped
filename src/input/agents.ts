@@ -1,10 +1,11 @@
-import { stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { readClaudeFacts } from "./adapters/claude.js";
 import { readCodexFacts } from "./adapters/codex.js";
 import { mergeFactSets } from "../domain/facts.js";
 import { readOpenCodeFacts } from "./adapters/opencode.js";
+import { readPiFacts } from "./adapters/pi.js";
 import type { AgentType, FactSet, Scope } from "../domain/types.js";
 
 export type AgentInput = {
@@ -21,6 +22,20 @@ export type AgentDataSourceAdapter = {
 };
 
 export const agentAdapters: AgentDataSourceAdapter[] = [
+  {
+    id: "pi",
+    async detect(root) {
+      try {
+        if ((await stat(join(root, "settings.json"))).isFile() && (await stat(join(root, "sessions"))).isDirectory()) return true;
+      } catch {}
+      try {
+        const sessions = (await stat(join(root, "sessions"))).isDirectory() ? join(root, "sessions") : root;
+        const entries = await readdir(sessions, { withFileTypes: true });
+        return entries.some((entry) => entry.isDirectory() && /^--.*--$/.test(entry.name));
+      } catch { return false; }
+    },
+    read: readPiFacts,
+  },
   {
     id: "claude-code",
     async detect(root) {
@@ -74,6 +89,9 @@ export function defaultAgentPaths(): string[] {
     process.env.CODEX_HOME ? resolve(process.env.CODEX_HOME) : join(homedir(), ".codex"),
     process.env.CLAUDE_CONFIG_DIR ? resolve(process.env.CLAUDE_CONFIG_DIR) : join(homedir(), ".claude"),
     process.env.OPENCODE_DB ? resolve(process.env.OPENCODE_DB, "..") : join(xdgData, "opencode"),
+    process.env.PI_CODING_AGENT_SESSION_DIR
+      ? resolve(process.env.PI_CODING_AGENT_SESSION_DIR)
+      : process.env.PI_CODING_AGENT_DIR ? resolve(process.env.PI_CODING_AGENT_DIR) : join(homedir(), ".pi", "agent"),
   ])];
 }
 

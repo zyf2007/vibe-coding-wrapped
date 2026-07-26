@@ -9,6 +9,10 @@ async function parser(): Promise<(task: JsonlWorkerTask) => Promise<FactSet>> {
     const { parseCodexFile } = await import("../adapters/codex.js");
     return (task) => parseCodexFile(task.file, task.root, task.sourceId, task.scope, task.fileSize);
   }
+  if (input.kind === "pi") {
+    const { parsePiFile } = await import("../adapters/pi.js");
+    return (task) => parsePiFile(task.file, task.root, task.sourceId, task.scope, task.fileSize);
+  }
   const { parseClaudeFile } = await import("../adapters/claude.js");
   return (task) => parseClaudeFile(task.file, task.root, task.sourceId, task.scope, task.fileSize);
 }

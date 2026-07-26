@@ -13,7 +13,7 @@ export type Scope = {
   excludedWords?: string[];
 };
 
-export type AgentType = "codex" | "claude-code" | "opencode";
+export type AgentType = "codex" | "claude-code" | "opencode" | "pi";
 
 export type SourceFact = {
   id: string;

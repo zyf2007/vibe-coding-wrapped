@@ -72,17 +72,18 @@ vibe-wrapped build --year 2026 \
   -i ~/.codex \
   -i ~/.claude \
   -i ~/.local/share/opencode \
+  -i ~/.pi/agent \
   -i ./copied-from-laptop/.codex \
   --out ./wrapped-2026
 ```
 
-The CLI detects the Agent type from each directory. It recognizes Codex homes containing `sessions/`, Claude Code homes containing `projects/`, and OpenCode data directories containing `opencode.db` or `storage/`. An unsupported or missing explicit input prints one path-first error line and is skipped; processing continues with other valid inputs.
+The CLI detects the Agent type from each directory. It recognizes Codex homes containing `sessions/`, Claude Code homes containing `projects/`, OpenCode data directories containing `opencode.db` or `storage/`, and Pi agent homes containing Pi's project-coded session directories. An unsupported or missing explicit input prints one path-first error line and is skipped; processing continues with other valid inputs.
 
-Without `-i`, the CLI checks the standard locations for all three Agents: `$CODEX_HOME` or `~/.codex`, `$CLAUDE_CONFIG_DIR` or `~/.claude`, and `$OPENCODE_DB` or `$XDG_DATA_HOME/opencode` (falling back to `~/.local/share/opencode`). Missing default locations are ignored silently.
+Without `-i`, the CLI checks the standard locations for all four Agents: `$CODEX_HOME` or `~/.codex`, `$CLAUDE_CONFIG_DIR` or `~/.claude`, `$OPENCODE_DB` or `$XDG_DATA_HOME/opencode` (falling back to `~/.local/share/opencode`), and `$PI_CODING_AGENT_SESSION_DIR`, `$PI_CODING_AGENT_DIR`, or `~/.pi/agent`. Missing default locations are ignored silently.
 
 Events from multiple inputs are deduplicated by stable content identity.
 
-Tool calls are normalized before analysis. For example, Codex `apply_patch`, Claude Code editing tools, and OpenCode tools are represented by stable names such as `file.patch`, `file.edit`, `shell.run`, and `web.fetch`. Reports aggregate these meanings across Agents; Agent type appears only in provenance. See [AGENT_ADAPTERS.md](./AGENT_ADAPTERS.md) for the data contract and mapping table.
+Tool calls are normalized before analysis. For example, Codex `apply_patch`, Claude Code editing tools, OpenCode tools, and Pi tools are represented by stable names such as `file.patch`, `file.edit`, `shell.run`, and `web.fetch`. Reports aggregate these meanings across Agents; Agent type appears only in provenance.
 
 ## Themes
 
@@ -91,6 +92,8 @@ Tool calls are normalized before analysis. For example, Codex `apply_patch`, Cla
 - `--theme PATH`: trusted custom directory containing `index.html`, `app.js`, and `style.css`
 
 Both built-in themes consume the same JSON and use only relative assets. Changing a theme never changes statistical results.
+
+Built-in themes select Simplified Chinese, English, or Japanese from `LC_ALL`, `LC_MESSAGES`, then `LANG` when the static report is rendered. `build` output remains language-neutral; `render` writes the selected locale to `theme-config.json`, and the theme loads messages from `locales/*.json`. Unsupported locales fall back to Simplified Chinese.
 
 ## Privacy
 

@@ -7,6 +7,7 @@ import { readClaudeFacts } from "../src/input/adapters/claude.js";
 import { readCodexFacts } from "../src/input/adapters/codex.js";
 import { normalizeTool } from "../src/domain/tools.js";
 import { readOpenCodeFacts } from "../src/input/adapters/opencode.js";
+import { readPiFacts } from "../src/input/adapters/pi.js";
 import { createPeriod } from "../src/domain/time.js";
 import type { Scope } from "../src/domain/types.js";
 
@@ -86,6 +87,33 @@ describe("Codex adapter cache", () => {
       if (previousCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
       else process.env.XDG_CACHE_HOME = previousCacheHome;
     }
+  });
+});
+
+describe("Pi adapter", () => {
+  it("normalizes prompts, usage, tools, outcomes and file edits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vibe-pi-")); temporaryDirectories.push(root);
+    const sessions = join(root, "sessions", "--work-demo--"); await mkdir(sessions, { recursive: true });
+    const rows = [
+      { type: "session", id: "s1", timestamp: "2026-07-10T08:00:00Z", cwd: "/work/demo" },
+      { type: "model_change", id: "m0", timestamp: "2026-07-10T08:00:00Z", provider: "openai", modelId: "gpt-5" },
+      { type: "thinking_level_change", id: "e0", timestamp: "2026-07-10T08:00:00Z", thinkingLevel: "high" },
+      { type: "message", id: "u1", timestamp: "2026-07-10T08:00:01Z", message: { role: "user", content: [{ type: "text", text: "更新配置并测试" }] } },
+      { type: "message", id: "a1", parentId: "u1", timestamp: "2026-07-10T08:00:02Z", message: { role: "assistant", provider: "openai", model: "gpt-5", usage: { input: 10, output: 4, cacheRead: 3, cacheWrite: 2, totalTokens: 19 }, content: [{ type: "toolCall", id: "c1", name: "edit", arguments: { path: "src/app.ts", edits: [{ oldText: "a", newText: "b\nc" }] } }, { type: "toolCall", id: "c2", name: "bash", arguments: { command: "npm test" } }] } },
+      { type: "message", id: "r1", parentId: "a1", timestamp: "2026-07-10T08:00:03Z", message: { role: "toolResult", toolCallId: "c1", toolName: "edit", isError: false, content: [] } },
+      { type: "message", id: "r2", parentId: "r1", timestamp: "2026-07-10T08:00:04Z", message: { role: "toolResult", toolCallId: "c2", toolName: "bash", isError: true, content: [] } },
+    ];
+    await writeFile(join(sessions, "session.jsonl"), `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+    const progress: string[] = [];
+    const facts = await readPiFacts([root], scope, (message) => progress.push(message));
+    expect(facts.sources[0].agentType).toBe("pi");
+    expect(facts.prompts[0]).toMatchObject({ text: "更新配置并测试", modelId: "openai/gpt-5" });
+    expect(facts.turns[0]).toMatchObject({ modelId: "openai/gpt-5", effort: "high" });
+    expect(facts.tokens[0]).toMatchObject({ input: 10, cachedInput: 3, cacheWrite: 2, output: 4, total: 19 });
+    expect(facts.tools).toEqual(expect.arrayContaining([expect.objectContaining({ name: "file.edit", exitCode: 0 }), expect.objectContaining({ name: "shell.run", isCheckInvocation: true, exitCode: 1 })]));
+    expect(facts.fileChanges[0]).toMatchObject({ path: "src/app.ts", added: 2, deleted: 1, modelId: "openai/gpt-5" });
+    expect((await readPiFacts([root], scope, (message) => progress.push(message)))).toEqual(facts);
+    expect(progress.some((message) => message.includes("Pi cache: reused 1/1"))).toBe(true);
   });
 });
 

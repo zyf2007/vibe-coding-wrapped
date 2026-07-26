@@ -71,6 +71,10 @@ h3 { margin-bottom: 12px; font-size: 14px; }
 .heat-cell { width: 100%; aspect-ratio: 1; padding: 0; border: 1px solid color-mix(in srgb, var(--green) 20%, var(--line)); background: color-mix(in srgb, var(--green) calc(var(--level) * 90%), #f0f0ec); cursor: pointer; }
 .heat-cell[aria-pressed="true"] { outline: 2px solid var(--red); outline-offset: 1px; }
 .report-foot { color: var(--muted); font: 11px/1.6 ui-monospace, monospace; }
+html[lang="en"] h2 { max-width: 28ch; font-size: clamp(20px, 2.6vw, 27px); overflow-wrap: anywhere; }
+html[lang="en"] h3 { max-width: 24ch; overflow-wrap: anywhere; }
+html[lang="en"] .stat span { display: block; max-width: 18ch; overflow-wrap: anywhere; }
+html[lang="en"] .lede { max-width: 62ch; }
 #tooltip { position: fixed; z-index: 50; max-width: min(280px, calc(100vw - 24px)); padding: 8px 10px; pointer-events: none; background: var(--ink); color: white; box-shadow: 0 5px 18px rgba(0,0,0,.18); font-size: 11px; line-height: 1.4; }
 @media (max-width: 640px) {
   #app { border-inline: 0; }

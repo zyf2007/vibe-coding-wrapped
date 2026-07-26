@@ -45,7 +45,7 @@ h2 { margin-bottom: 0; font-size: clamp(32px, 5vw, 74px); line-height: 1; letter
 .metric { padding: 22px 16px 22px 0; min-width: 0; container-type: inline-size; }
 .metric strong { display: block; font: 700 clamp(20px, 16cqi, 58px)/1 ui-monospace, monospace; white-space: nowrap; }
 .metric-short strong { font-size: clamp(14px, 10cqi, 36px); }
-.metric span { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.metric span { display: block; max-width: 22ch; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .token-amount { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; min-width: 0; }
 .token-total { align-self: center; flex-wrap: nowrap; gap: 10px 18px; overflow-x: auto; }
 .token-total .hero-number { font-size: 170px; }
@@ -112,6 +112,11 @@ h2 { margin-bottom: 0; font-size: clamp(32px, 5vw, 74px); line-height: 1; letter
 #progress i { position: absolute; inset: 0 0 auto; height: var(--progress, 0%); background: #fff; transition: height .3s ease; }
 #tooltip { position: fixed; z-index: 50; max-width: min(320px, calc(100vw - 24px)); padding: 8px 10px; pointer-events: none; background: #f4f2ec; color: #151513; border: 1px solid rgba(21,21,19,.2); box-shadow: 0 5px 18px rgba(0,0,0,.22); font: 600 11px/1.4 ui-monospace, monospace; }
 .empty { align-self: center; color: var(--muted); }
+html[lang="en"] .page header { max-width: min(100%, 880px); container-type: inline-size; }
+html[lang="en"] h2 { max-width: 19ch; font-size: clamp(30px, 8cqi, 64px); line-height: 1.04; overflow-wrap: anywhere; }
+html[lang="en"] .lede { max-width: 62ch; }
+html[lang="en"] .hero-label { max-width: 28ch; }
+html[lang="en"] .foot span { max-width: 72ch; }
 @media (max-width: 720px) {
   .page { padding: 28px 48px 34px 22px; gap: 20px; }
   h1 { font-size: clamp(46px, 16vw, 78px); }

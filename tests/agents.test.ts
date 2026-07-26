@@ -42,6 +42,14 @@ describe("detectAgentInputs", () => {
     ]);
   });
 
+  it("detects Pi roots before the generic sessions-based Codex adapter", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vibe-agents-")); temporaryDirectories.push(root);
+    const pi = join(root, "pi-agent");
+    await mkdir(join(pi, "sessions", "--work-demo--"), { recursive: true });
+    await writeFile(join(pi, "settings.json"), "{}");
+    expect(await detectAgentInputs([pi], () => {})).toEqual([{ type: "pi", root: pi }]);
+  });
+
   it("deduplicates explicit inputs and applies exact root exclusions", () => {
     expect(selectAgentInputPaths(["/tmp/a", "/tmp/a", "/tmp/b"], ["/tmp/a"])).toEqual(["/tmp/b"]);
   });

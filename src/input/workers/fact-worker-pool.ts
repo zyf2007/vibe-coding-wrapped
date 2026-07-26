@@ -2,7 +2,7 @@ import { Worker } from "node:worker_threads";
 import type { FactSet, Scope } from "../../domain/types.js";
 import { inputWorkerCount } from "../concurrency.js";
 
-export type JsonlWorkerKind = "codex" | "claude-code";
+export type JsonlWorkerKind = "codex" | "claude-code" | "pi";
 
 export type JsonlWorkerTask = {
   file: string;
