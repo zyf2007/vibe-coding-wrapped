@@ -1,6 +1,7 @@
 import { access, cp, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { temporarySiblingPath } from "./temporary.js";
 
 const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -35,7 +36,7 @@ async function resolveTheme(selection: string): Promise<ResolvedTheme> {
 export async function renderBundle(bundleDirectory: string, output: string, themeSelection = "official"): Promise<void> {
   const bundle = resolve(bundleDirectory);
   const target = resolve(output);
-  const temporary = join(dirname(target), `.${target.split("/").at(-1)}.tmp-${process.pid}`);
+  const temporary = temporarySiblingPath(target);
   const theme = await resolveTheme(themeSelection);
   await rm(temporary, { recursive: true, force: true });
   await mkdir(temporary, { recursive: true });

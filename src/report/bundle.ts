@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import type { Bundle } from "../domain/types.js";
+import { temporarySiblingPath } from "./temporary.js";
 
 const artifactNames = ["overview", "activity", "prompts", "projects", "tools", "code", "models", "tokens", "git", "records", "provenance"] as const;
 
@@ -15,7 +16,7 @@ function sha256(value: string): string {
 
 export async function writeBundle(bundle: Bundle, output: string): Promise<void> {
   const target = resolve(output);
-  const temporary = join(dirname(target), `.${target.split("/").at(-1)}.tmp-${process.pid}`);
+  const temporary = temporarySiblingPath(target);
   await rm(temporary, { recursive: true, force: true });
   await mkdir(temporary, { recursive: true });
   const files: Array<{ path: string; sha256: string; producer: string }> = [];
