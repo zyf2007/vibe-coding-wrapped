@@ -13,14 +13,14 @@ export function mergeFactSets(sets: FactSet[]): FactSet {
   for (const set of sets) {
     output.scannedFiles += set.scannedFiles;
     output.scannedBytes += set.scannedBytes;
-    output.diagnostics.push(...set.diagnostics);
-    output.sources.push(...set.sources);
-    output.sessions.push(...set.sessions);
-    output.turns.push(...set.turns);
-    output.prompts.push(...set.prompts);
-    output.tokens.push(...set.tokens);
-    output.tools.push(...set.tools);
-    output.fileChanges.push(...set.fileChanges);
+    for (const diagnostic of set.diagnostics) output.diagnostics.push(diagnostic);
+    for (const source of set.sources) output.sources.push(source);
+    for (const session of set.sessions) output.sessions.push(session);
+    for (const turn of set.turns) output.turns.push(turn);
+    for (const prompt of set.prompts) output.prompts.push(prompt);
+    for (const token of set.tokens) output.tokens.push(token);
+    for (const tool of set.tools) output.tools.push(tool);
+    for (const change of set.fileChanges) output.fileChanges.push(change);
   }
   output.sessions = deduplicate(output.sessions);
   output.turns = deduplicate(output.turns);
