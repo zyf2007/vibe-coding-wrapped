@@ -142,6 +142,9 @@ export async function parseCodexFile(file: string, root: string, sourceId: strin
   let currentModel: string | undefined;
   let pendingPrompt: PromptFact | undefined;
   let previousTotal = { input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
+  let sessionMetaSeen = false;
+  let subagentForkId: string | undefined;
+  let subagentReplayComplete = true;
   let lineNumber = 0;
   const periodBounds = periodEpochBounds(scope.period, scope.timezone, scope.dayStartHour);
   const reader = createInterface({ input: createReadStream(file), crlfDelay: Infinity });
@@ -163,7 +166,17 @@ export async function parseCodexFile(file: string, root: string, sourceId: strin
         const payload = event.payload ?? {};
 
         if (event.type === "session_meta") {
-          sessionId = String(payload.id ?? payload.session_id ?? sessionId);
+          if (!sessionMetaSeen) {
+            sessionMetaSeen = true;
+            const isSubagent = payload.thread_source === "subagent" || Boolean(payload.source?.subagent);
+            sessionId = String(payload.id ?? payload.session_id ?? sessionId);
+            subagentForkId = isSubagent ? sessionId : undefined;
+            subagentReplayComplete = !isSubagent;
+            currentTurn = undefined;
+            currentModel = undefined;
+            pendingPrompt = undefined;
+            previousTotal = { input: 0, cached: 0, output: 0, reasoning: 0, total: 0 };
+          }
           sessionCwd = typeof payload.cwd === "string" ? payload.cwd : sessionCwd;
           const id = stableId("session", sessionId);
           if (insidePeriod && !seen.sessions.has(id)) {
@@ -171,6 +184,16 @@ export async function parseCodexFile(file: string, root: string, sourceId: strin
             facts.sessions.push({ id, occurredAt: timestamp, cwd: sessionCwd, sourceId });
           }
           continue;
+        }
+
+        if (subagentForkId && !subagentReplayComplete) {
+          const turn = typeof payload.turn_id === "string" ? payload.turn_id : undefined;
+          // UUIDv7 ordering separates turns inherited from the parent from turns created after the fork.
+          if ((event.type === "event_msg" && payload.type === "task_started" || event.type === "turn_context") && turn && turn > subagentForkId) {
+            subagentReplayComplete = true;
+          } else {
+            continue;
+          }
         }
 
         if (event.type === "turn_context") {
@@ -199,10 +222,12 @@ export async function parseCodexFile(file: string, root: string, sourceId: strin
         if (event.type === "event_msg" && payload.type === "user_message" && typeof payload.message === "string") {
           const text = normalizePrompt(payload.message);
           if (isSyntheticPrompt(text)) continue;
-          const id = stableId("prompt", `${sessionId}:${timestamp}:${hash(text)}`);
+          const turnId = metadataTurnId(payload) ?? currentTurn;
+          const identity = turnId ? `${sessionId}:${turnId}:${hash(text)}` : `${sessionId}:${timestamp}:${hash(text)}`;
+          const id = stableId("prompt", identity);
           pendingPrompt = seen.prompts.get(id);
           if (!pendingPrompt) {
-            pendingPrompt = { id, sessionId, turnId: currentTurn, occurredAt: timestamp, cwd: sessionCwd, text };
+            pendingPrompt = { id, sessionId, turnId, occurredAt: timestamp, cwd: sessionCwd, text };
             seen.prompts.set(id, pendingPrompt);
             facts.prompts.push(pendingPrompt);
           }
@@ -212,10 +237,12 @@ export async function parseCodexFile(file: string, root: string, sourceId: strin
         if (event.type === "response_item" && payload.type === "message" && payload.role === "user") {
           const text = normalizePrompt(messageText(payload.content));
           if (isSyntheticPrompt(text)) continue;
-          const id = stableId("prompt", `${sessionId}:${timestamp}:${hash(text)}`);
+          const turnId = metadataTurnId(payload) ?? currentTurn;
+          const identity = turnId ? `${sessionId}:${turnId}:${hash(text)}` : `${sessionId}:${timestamp}:${hash(text)}`;
+          const id = stableId("prompt", identity);
           pendingPrompt = seen.prompts.get(id);
           if (!pendingPrompt) {
-            pendingPrompt = { id, sessionId, turnId: metadataTurnId(payload) ?? currentTurn, occurredAt: timestamp, cwd: sessionCwd, text };
+            pendingPrompt = { id, sessionId, turnId, occurredAt: timestamp, cwd: sessionCwd, text };
             seen.prompts.set(id, pendingPrompt);
             facts.prompts.push(pendingPrompt);
           }
@@ -240,7 +267,7 @@ export async function parseCodexFile(file: string, root: string, sourceId: strin
           };
           previousTotal = current;
           const turnId = metadataTurnId(payload) ?? currentTurn;
-          const id = stableId("token", `${sessionId}:${turnId ?? ""}:${timestamp}:${usage.total}`);
+          const id = stableId("token", `${sessionId}:${turnId ?? ""}:${current.input}:${current.cached}:${current.output}:${current.reasoning}:${current.total}`);
           if (!seen.tokens.has(id) && usage.total > 0) {
             seen.tokens.add(id);
             facts.tokens.push({ id, sessionId, turnId, occurredAt: timestamp, modelId: currentModel, input: usage.input, cachedInput: usage.cached, output: usage.output, reasoning: usage.reasoning, total: usage.total });
@@ -310,7 +337,7 @@ export async function readCodexFacts(roots: string[], scope: Scope, onProgress?:
     onProgress?.(`Scanning ${files.length} candidate files from ${root}`);
     const candidates = await mapConcurrent(files, 16, async (file) => {
       const info = await stat(file);
-      const cacheKey = factCacheKey("codex", 4, scope, file, [{ path: file, size: info.size, mtimeMs: info.mtimeMs }]);
+      const cacheKey = factCacheKey("codex", 5, scope, file, [{ path: file, size: info.size, mtimeMs: info.mtimeMs }]);
       const cached = options.bypassCache ? undefined : await readFactCache(cacheKey);
       return { file, fileSize: info.size, cacheKey, cached };
     });
