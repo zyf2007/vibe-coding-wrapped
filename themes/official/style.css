@@ -85,12 +85,16 @@ h2 { margin-bottom: 0; font-size: clamp(32px, 5vw, 74px); line-height: 1; letter
 .month-count, .month-label { color: var(--muted); font: 9px/1 ui-monospace, monospace; white-space: nowrap; }
 .month-count { color: var(--ink); }
 .day:focus-visible, .timeline i:focus-visible, .bars i:focus-visible, .spectrum span:focus-visible, .matrix i:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.timeline { align-self: center; flex: 1 1 120px; display: grid; grid-template-columns: repeat(24, 1fr); align-items: end; gap: 4px; width: 100%; min-height: 70px; max-height: min(32vh, 280px); border-bottom: 1px solid var(--line); }
+.bar-chart { width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-color: var(--muted) transparent; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+.bar-axis { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 5px; min-height: 18px; width: 100%; min-width: 720px; }
+.bar-axis small { min-width: 0; overflow: hidden; color: var(--muted); text-align: center; font: 9px/1 ui-monospace, monospace; white-space: nowrap; }
+.timeline { align-self: center; flex: 1 1 120px; display: grid; grid-template-columns: repeat(24, 1fr); align-items: end; gap: 4px; width: 100%; min-width: 720px; min-height: 70px; max-height: min(32vh, 280px); border-bottom: 1px solid var(--line); }
 .timeline i, .bars i { display: block; width: 100%; min-height: 2px; height: calc(var(--value) * 1%); background: var(--accent); }
 .timeline i:nth-child(3n), .bars i:nth-child(3n) { background: var(--green); }
-.bars { align-self: center; flex: 1 1 150px; display: grid; grid-template-columns: repeat(24, 1fr); align-items: end; gap: 5px; width: 100%; min-height: 90px; max-height: min(38vh, 330px); border-bottom: 1px solid var(--line); }
+.bars { align-self: center; flex: 1 1 150px; display: grid; grid-template-columns: repeat(24, 1fr); align-items: end; gap: 5px; width: 100%; min-width: 720px; min-height: 90px; max-height: min(38vh, 330px); border-bottom: 1px solid var(--line); }
 .bars div { height: 100%; display: flex; align-items: end; position: relative; }
 .bars small { position: absolute; bottom: -22px; left: 50%; transform: translateX(-50%); color: var(--muted); font: 10px ui-monospace, monospace; }
+.timeline-axis { gap: 4px; }
 .spectrum { align-self: center; display: flex; width: 100%; min-height: 112px; border: 1px solid var(--line); overflow: hidden; }
 .spectrum span { flex-basis: max(2%, calc(var(--share) * 100%)); background: var(--color); min-width: 3px; position: relative; }
 .rank-list { align-self: center; width: 100%; max-height: 100%; overflow: hidden; display: grid; gap: 0; border-top: 1px solid var(--line); }

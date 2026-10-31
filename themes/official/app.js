@@ -66,6 +66,12 @@ function metricRow(items) {
   return row;
 }
 
+function hourAxis(step = 1) {
+  const axis = node("div", "bar-axis");
+  for (let hour = 0; hour < 24; hour += 1) axis.append(node("small", "", hour % step === 0 ? `${String(hour).padStart(2, "0")}:00` : ""));
+  return axis;
+}
+
 function tokenMetricRow(items) {
   const row = node("div", "metric-row token-metrics");
   for (const [labelKey, result] of items) {
@@ -149,15 +155,15 @@ function calendar(bundle) {
 function peakDay(bundle) {
   const root = page("peak-day", "TIME / 02", "title.peakDay"); const busiest = value(bundle.records.busiestDay); if (!busiest) { root.append(node("p", "empty", t("common.insufficientData"))); return root; }
   const events = bundle.activity.dayTimelines[busiest.codingDay] || []; const hours = Array.from({ length: 24 }, () => 0); events.forEach((event) => { const hour = Number(event.at.split("T")[1]?.slice(0, 2)); if (Number.isFinite(hour)) hours[hour] += 1; }); const max = Math.max(1, ...hours);
-  const timeline = node("div", "timeline"); hours.forEach((count, hour) => { const bar = node("i"); bar.style.setProperty("--value", String(Math.max(1, count / max * 100))); interactiveTooltip(bar, t("chart.hourEvents", { hour: String(hour).padStart(2, "0"), count })); timeline.append(bar); });
+  const timeline = node("div", "timeline"); hours.forEach((count, hour) => { const bar = node("i"); bar.style.setProperty("--value", String(Math.max(1, count / max * 100))); interactiveTooltip(bar, t("chart.hourEvents", { hour: String(hour).padStart(2, "0"), count })); timeline.append(bar); }); const timelineChart = node("div", "bar-chart"); append(timelineChart, timeline, hourAxis());
   const dayPrompts = value(bundle.records.busiestDayPrompts, {});
-  root.append(timeline, metricRow([["metric.date", busiest.codingDay, "short"], ["metric.prompts", busiest.prompts], ["metric.toolCalls", busiest.toolCalls], ["metric.tokens", busiest.totalTokens, "token"]]), memoryQuotes([{ labelKey: "record.dayStarted", record: dayPrompts.first }, { labelKey: "record.dayEnded", record: dayPrompts.last }])); return root;
+  root.append(timelineChart, metricRow([["metric.date", busiest.codingDay, "short"], ["metric.prompts", busiest.prompts], ["metric.toolCalls", busiest.toolCalls], ["metric.tokens", busiest.totalTokens, "token"]]), memoryQuotes([{ labelKey: "record.dayStarted", record: dayPrompts.first }, { labelKey: "record.dayEnded", record: dayPrompts.last }])); return root;
 }
 
 function clock(bundle) {
   const root = page("clock", "TIME / 03", "title.clock", "dark"); const hours = value(bundle.activity.byHour, []); const max = Math.max(1, ...hours.map((item) => item.prompts)); const bars = node("div", "bars");
-  hours.forEach((item) => { const wrap = node("div"); const bar = node("i"); bar.style.setProperty("--value", String(Math.max(1, item.prompts / max * 100))); interactiveTooltip(bar, t("chart.hourActivity", { hour: String(item.hour).padStart(2, "0"), prompts: item.prompts, turns: item.turns, tools: item.toolCalls })); wrap.append(bar); if (item.hour % 4 === 0) wrap.append(node("small", "", String(item.hour).padStart(2, "0"))); bars.append(wrap); });
-  const earliest = value(bundle.records.earliestActivity); const latest = value(bundle.records.latestActivity); root.append(bars, memoryQuotes([{ labelKey: "record.earliestStart", record: earliest }, { labelKey: "record.latestActivity", record: latest }])); foot(root, t("record.earliestLatest", { earliest: dateText(earliest?.localDateTime), latest: dateText(latest?.localDateTime) }), bundle); return root;
+  hours.forEach((item) => { const wrap = node("div"); const bar = node("i"); bar.style.setProperty("--value", String(Math.max(1, item.prompts / max * 100))); interactiveTooltip(bar, t("chart.hourActivity", { hour: String(item.hour).padStart(2, "0"), prompts: item.prompts, turns: item.turns, tools: item.toolCalls })); wrap.append(bar); bars.append(wrap); });
+  const barsChart = node("div", "bar-chart"); append(barsChart, bars, hourAxis()); const earliest = value(bundle.records.earliestActivity); const latest = value(bundle.records.latestActivity); root.append(barsChart, memoryQuotes([{ labelKey: "record.earliestStart", record: earliest }, { labelKey: "record.latestActivity", record: latest }])); foot(root, t("record.earliestLatest", { earliest: dateText(earliest?.localDateTime), latest: dateText(latest?.localDateTime) }), bundle); return root;
 }
 
 function rhythm(bundle) {
@@ -224,7 +230,7 @@ function tokenJourney(bundle) {
 }
 
 function gitPulse(bundle) {
-  const root = page("git-pulse", "DELIVERY", "title.git", "dark"); const stats = value(bundle.git.commitStats, {}); const promptDays = new Map(value(bundle.activity.calendar.days, []).map((item) => [item.codingDay, item.prompts])); const tokenDays = new Map(value(bundle.tokens.trend, []).map((item) => [item.codingDay, item.total])); const commits = value(bundle.git.commitTrend, []); const maxCommit = Math.max(1, ...commits.map((item) => item.commits)); const maxPrompt = Math.max(1, ...promptDays.values()); const maxToken = Math.max(1, ...tokenDays.values()); const timeline = node("div", "timeline"); commits.forEach((item) => { const prompts = promptDays.get(item.codingDay) || 0; const tokens = tokenDays.get(item.codingDay) || 0; const combined = item.commits / maxCommit * 45 + prompts / maxPrompt * 30 + tokens / maxToken * 25; const bar = node("i"); bar.style.setProperty("--value", String(Math.max(2,combined))); interactiveTooltip(bar, t("git.tooltip", { day: item.codingDay, commits: item.commits, prompts, tokens: tokenDecimal.format(tokens / 1_000_000) })); timeline.append(bar); }); root.append(timeline, metricRow([["metric.commits", stats.commits], ["metric.commitDays", stats.activeDays], ["metric.gitLinesAdded", stats.linesAdded], ["metric.repositories", bundle.git.repositories.length]])); foot(root, t("git.disclaimer"), bundle); return root;
+  const root = page("git-pulse", "DELIVERY", "title.git", "dark"); const stats = value(bundle.git.commitStats, {}); const promptDays = new Map(value(bundle.activity.calendar.days, []).map((item) => [item.codingDay, item.prompts])); const tokenDays = new Map(value(bundle.tokens.trend, []).map((item) => [item.codingDay, item.total])); const commits = value(bundle.git.commitTrend, []); const maxCommit = Math.max(1, ...commits.map((item) => item.commits)); const maxPrompt = Math.max(1, ...promptDays.values()); const maxToken = Math.max(1, ...tokenDays.values()); const timeline = node("div", "timeline"); timeline.style.gridTemplateColumns = `repeat(${Math.max(1, commits.length)}, minmax(0, 1fr))`; const axis = node("div", "bar-axis timeline-axis"); axis.style.gridTemplateColumns = `repeat(${Math.max(1, commits.length)}, minmax(0, 1fr))`; const labelStep = Math.max(1, Math.ceil(commits.length / 12)); commits.forEach((item, index) => { const prompts = promptDays.get(item.codingDay) || 0; const tokens = tokenDays.get(item.codingDay) || 0; const combined = item.commits / maxCommit * 45 + prompts / maxPrompt * 30 + tokens / maxToken * 25; const bar = node("i", ""); bar.style.setProperty("--value", String(Math.max(2,combined))); interactiveTooltip(bar, t("git.tooltip", { day: item.codingDay, commits: item.commits, prompts, tokens: tokenDecimal.format(tokens / 1_000_000) })); timeline.append(bar); axis.append(node("small", "", index % labelStep === 0 ? item.codingDay.slice(5) : "")); }); const timelineChart = node("div", "bar-chart"); append(timelineChart, timeline, axis); root.append(timelineChart, metricRow([["metric.commits", stats.commits], ["metric.commitDays", stats.activeDays], ["metric.gitLinesAdded", stats.linesAdded], ["metric.repositories", bundle.git.repositories.length]])); foot(root, t("git.disclaimer"), bundle); return root;
 }
 
 function closing(bundle) {
