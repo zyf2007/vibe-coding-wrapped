@@ -38,15 +38,18 @@ function renderHeader(bundle) {
 }
 
 function renderRhythm(bundle) {
-  const root = section("TIME", "section.time"); const days = value(bundle.activity.calendar.days, []); const maxDay = Math.max(1, ...days.map((day) => day.prompts)); const calendar = el("div", "calendar");
-  calendar.classList.add(days.length < 100 ? "calendar-short" : "calendar-long");
-  const offset = days.length ? new Date(`${days[0].codingDay}T00:00:00Z`).getUTCDay() : 0;
+  const root = section("TIME", "section.time"); const days = value(bundle.activity.calendar.days, []).sort((a, b) => a.codingDay.localeCompare(b.codingDay)); const maxDay = Math.max(1, ...days.map((day) => day.prompts)); const calendar = el("div", "calendar");
+  const sizeClass = days.length < 100 ? "calendar-short" : "calendar-long"; calendar.classList.add(sizeClass);
+  const offset = days.length ? (new Date(`${days[0].codingDay}T00:00:00Z`).getUTCDay() + 6) % 7 : 0; const monthFormatter = new Intl.DateTimeFormat(i18n.locale, { month: "short", timeZone: "UTC" }); const monthTotals = new Map(); const months = el("div", `calendar-months ${sizeClass}`);
+  days.forEach((day, index) => { const monthKey = day.codingDay.slice(0, 7); monthTotals.set(monthKey, (monthTotals.get(monthKey) || 0) + day.prompts); if (index === 0 || monthKey !== days[index - 1].codingDay.slice(0, 7)) { const label = el("span", "calendar-month", monthFormatter.format(new Date(`${day.codingDay}T00:00:00Z`))); label.style.gridColumn = String(Math.floor((offset + index) / 7) + 1); months.append(label); } });
   for (let index = 0; index < offset; index += 1) { const pad = el("i", "calendar-pad"); pad.setAttribute("aria-hidden", "true"); calendar.append(pad); }
   days.forEach((day) => { const cell = el("i"); const label = t("calendar.dayTooltip", { day: day.codingDay, count: day.prompts }); cell.style.setProperty("--level", String(Math.ceil(day.prompts / maxDay * 8))); interactiveTooltip(cell, label); calendar.append(cell); });
-  const hours = value(bundle.activity.byHour, []); const maxHour = Math.max(1, ...hours.map((hour) => hour.prompts)); const bars = el("div", "hour-bars");
-  hours.forEach((hour) => { const bar = el("button"); const label = t("chart.hourPrompts", { hour: String(hour.hour).padStart(2, "0"), prompts: hour.prompts }); bar.style.setProperty("--level", String(hour.prompts / maxHour)); interactiveTooltip(bar, label); bars.append(bar); });
+  const weekdays = el("div", "calendar-weekdays"); weekdays.setAttribute("aria-hidden", "true"); ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].forEach((weekday) => weekdays.append(el("span", "", t(`weekday.${weekday}`)))); const calendarMain = el("div", "calendar-main"); append(calendarMain, months, calendar); const calendarPanel = el("div", `calendar-panel ${sizeClass}`); append(calendarPanel, weekdays, calendarMain); const calendarScroll = scrollChart(calendarPanel, "compact.calendar");
+  const firstMonth = days.length ? new Date(`${days[0].codingDay.slice(0, 7)}-01T00:00:00Z`) : undefined; const lastMonth = days.length ? new Date(`${days.at(-1).codingDay.slice(0, 7)}-01T00:00:00Z`) : undefined; const monthly = [];
+  if (firstMonth && lastMonth) for (const date = new Date(firstMonth); date <= lastMonth; date.setUTCMonth(date.getUTCMonth() + 1)) { const key = date.toISOString().slice(0, 7); monthly.push({ date: new Date(date), prompts: monthTotals.get(key) || 0 }); }
+  const maxMonth = Math.max(1, ...monthly.map((item) => item.prompts)); const bars = el("div", "month-chart"); monthly.forEach((item) => { const bar = el("button", "month-bar"); bar.style.setProperty("--value", String(item.prompts / maxMonth * 100)); interactiveTooltip(bar, t("chart.monthPrompts", { month: monthFormatter.format(item.date), prompts: item.prompts })); const column = el("div", "month-column"); append(column, bar, el("small", "month-count", format(item.prompts)), el("span", "month-label", monthFormatter.format(item.date))); bars.append(column); });
   const records = el("div", "quotes"); append(records, quote("record.firstInPeriod", value(bundle.prompts.firstInPeriod)), quote("record.earliestStart", value(bundle.records.earliestActivity)), quote("record.latestActivity", value(bundle.records.latestActivity)));
-  const layout = el("div", "two-col"); append(layout, column("compact.calendar", scrollChart(calendar, "compact.calendar")), column("compact.hourDistribution", scrollChart(bars, "compact.hourDistribution"))); append(root, layout, records); return root;
+  const layout = el("div", "two-col"); append(layout, column("compact.calendar", calendarScroll), column("calendar.monthlyPrompts", bars)); append(root, layout, records); return root;
 }
 
 function renderPrompts(bundle) {

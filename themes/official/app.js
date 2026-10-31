@@ -123,13 +123,27 @@ function scale(bundle) {
 }
 
 function calendar(bundle) {
-  const root = page("calendar", "TIME / 01", "title.calendar", "green"); const days = value(bundle.activity.calendar.days, []); const max = Math.max(1, ...days.map((item) => item.prompts));
-  const scroll = node("div", "calendar-scroll"); const grid = node("div", "calendar");
-  grid.classList.add(days.length < 100 ? "calendar-short" : "calendar-long");
-  const offset = days.length ? new Date(`${days[0].codingDay}T00:00:00Z`).getUTCDay() : 0;
+  const root = page("calendar", "TIME / 01", "title.calendar", "green"); const days = value(bundle.activity.calendar.days, []).sort((a, b) => a.codingDay.localeCompare(b.codingDay)); const max = Math.max(1, ...days.map((item) => item.prompts));
+  const layout = node("div", "calendar-layout"); const scroll = node("div", "calendar-scroll"); scroll.classList.add(days.length < 100 ? "calendar-short" : "calendar-long");
+  const weekdayAxis = node("div", "calendar-weekdays"); weekdayAxis.setAttribute("aria-hidden", "true");
+  ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].forEach((weekday) => weekdayAxis.append(node("span", "", t(`weekday.${weekday}`))));
+  const main = node("div", "calendar-main"); const grid = node("div", "calendar"); const months = node("div", "calendar-months");
+  grid.classList.add(days.length < 100 ? "calendar-short" : "calendar-long"); months.classList.add(days.length < 100 ? "calendar-short" : "calendar-long");
+  const offset = days.length ? (new Date(`${days[0].codingDay}T00:00:00Z`).getUTCDay() + 6) % 7 : 0;
+  const monthFormatter = new Intl.DateTimeFormat(i18n.locale, { month: "short", timeZone: "UTC" });
+  const monthTotals = new Map();
+  days.forEach((day, index) => {
+    const monthKey = day.codingDay.slice(0, 7); monthTotals.set(monthKey, (monthTotals.get(monthKey) || 0) + day.prompts);
+    if (index === 0 || monthKey !== days[index - 1].codingDay.slice(0, 7)) { const date = new Date(`${day.codingDay}T00:00:00Z`); const label = node("span", "calendar-month", monthFormatter.format(date)); label.style.gridColumn = String(Math.floor((offset + index) / 7) + 1); months.append(label); }
+  });
   for (let index = 0; index < offset; index += 1) { const pad = node("i", "calendar-pad"); pad.setAttribute("aria-hidden", "true"); grid.append(pad); }
   days.forEach((day) => { const cell = node("i", "day"); const label = t("calendar.dayTooltip", { day: day.codingDay, count: day.prompts }); cell.style.setProperty("--level", String(Math.ceil((day.prompts / max) * 8))); interactiveTooltip(cell, label); grid.append(cell); });
-  scroll.append(grid); root.append(scroll); const streak = value(bundle.records.longestStreak, {}); foot(root, t("calendar.summary", { activeDays: days.filter((item) => item.prompts).length, streak: streak.days || 0 }), bundle); return root;
+  const firstMonth = days.length ? new Date(`${days[0].codingDay.slice(0, 7)}-01T00:00:00Z`) : undefined; const lastMonth = days.length ? new Date(`${days.at(-1).codingDay.slice(0, 7)}-01T00:00:00Z`) : undefined;
+  const monthly = [];
+  if (firstMonth && lastMonth) for (const date = new Date(firstMonth); date <= lastMonth; date.setUTCMonth(date.getUTCMonth() + 1)) { const key = date.toISOString().slice(0, 7); monthly.push({ key, date: new Date(date), prompts: monthTotals.get(key) || 0 }); }
+  const maxMonth = Math.max(1, ...monthly.map((item) => item.prompts)); const chart = node("div", "month-chart");
+  monthly.forEach((item) => { const column = node("div", "month-column"); const bar = node("i", "month-bar"); bar.style.setProperty("--value", String(item.prompts / maxMonth * 100)); interactiveTooltip(bar, t("chart.monthPrompts", { month: monthFormatter.format(item.date), prompts: item.prompts })); append(column, bar, node("small", "month-count", format(item.prompts)), node("span", "month-label", monthFormatter.format(item.date))); chart.append(column); });
+  main.append(months, grid); scroll.append(weekdayAxis, main); append(layout, scroll, append(node("div", "month-chart-panel"), node("h3", "", t("calendar.monthlyPrompts")), chart)); root.append(layout); const streak = value(bundle.records.longestStreak, {}); foot(root, t("calendar.summary", { activeDays: days.filter((item) => item.prompts).length, streak: streak.days || 0 }), bundle); return root;
 }
 
 function peakDay(bundle) {
