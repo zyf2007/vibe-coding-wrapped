@@ -73,6 +73,15 @@ function normalizePrompt(text: string): string {
     .trim();
 }
 
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((item) => ["text", "input_text", "output_text"].includes(String(item?.type)) && typeof item?.text === "string")
+    .map((item) => item.text as string)
+    .join("\n");
+}
+
 function parseToolInput(payload: Record<string, any>): { raw: string; parsed?: Record<string, any> } {
   const value = payload.input ?? payload.arguments ?? "";
   if (typeof value === "object" && value) return { raw: JSON.stringify(value), parsed: value };
@@ -122,7 +131,7 @@ function extractFileChanges(tool: ToolFact, input: string): FileChangeFact[] {
 export async function parseCodexFile(file: string, root: string, sourceId: string, scope: Scope, knownFileSize?: number): Promise<FactSet> {
   const facts = emptyFacts();
   facts.sources.push({ id: sourceId, agentType: "codex", root });
-  const seen = { sessions: new Set<string>(), turns: new Set<string>(), prompts: new Set<string>(), tokens: new Set<string>(), tools: new Set<string>(), changes: new Set<string>() };
+  const seen = { sessions: new Set<string>(), turns: new Set<string>(), prompts: new Map<string, PromptFact>(), tokens: new Set<string>(), tools: new Set<string>(), changes: new Set<string>() };
   const toolByCallId = new Map<string, ToolFact>();
   const turnModels = new Map<string, { modelId: string; effort?: string; cwd?: string }>();
   facts.scannedFiles = 1;
@@ -191,9 +200,23 @@ export async function parseCodexFile(file: string, root: string, sourceId: strin
           const text = normalizePrompt(payload.message);
           if (isSyntheticPrompt(text)) continue;
           const id = stableId("prompt", `${sessionId}:${timestamp}:${hash(text)}`);
-          if (!seen.prompts.has(id)) {
-            seen.prompts.add(id);
-            pendingPrompt = { id, sessionId, turnId: undefined, occurredAt: timestamp, cwd: sessionCwd, text };
+          pendingPrompt = seen.prompts.get(id);
+          if (!pendingPrompt) {
+            pendingPrompt = { id, sessionId, turnId: currentTurn, occurredAt: timestamp, cwd: sessionCwd, text };
+            seen.prompts.set(id, pendingPrompt);
+            facts.prompts.push(pendingPrompt);
+          }
+          continue;
+        }
+
+        if (event.type === "response_item" && payload.type === "message" && payload.role === "user") {
+          const text = normalizePrompt(messageText(payload.content));
+          if (isSyntheticPrompt(text)) continue;
+          const id = stableId("prompt", `${sessionId}:${timestamp}:${hash(text)}`);
+          pendingPrompt = seen.prompts.get(id);
+          if (!pendingPrompt) {
+            pendingPrompt = { id, sessionId, turnId: metadataTurnId(payload) ?? currentTurn, occurredAt: timestamp, cwd: sessionCwd, text };
+            seen.prompts.set(id, pendingPrompt);
             facts.prompts.push(pendingPrompt);
           }
           continue;
@@ -287,7 +310,7 @@ export async function readCodexFacts(roots: string[], scope: Scope, onProgress?:
     onProgress?.(`Scanning ${files.length} candidate files from ${root}`);
     const candidates = await mapConcurrent(files, 16, async (file) => {
       const info = await stat(file);
-      const cacheKey = factCacheKey("codex", 3, scope, file, [{ path: file, size: info.size, mtimeMs: info.mtimeMs }]);
+      const cacheKey = factCacheKey("codex", 4, scope, file, [{ path: file, size: info.size, mtimeMs: info.mtimeMs }]);
       const cached = options.bypassCache ? undefined : await readFactCache(cacheKey);
       return { file, fileSize: info.size, cacheKey, cached };
     });
