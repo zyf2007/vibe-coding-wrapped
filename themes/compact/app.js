@@ -49,7 +49,7 @@ function renderRhythm(bundle) {
   if (firstMonth && lastMonth) for (const date = new Date(firstMonth); date <= lastMonth; date.setUTCMonth(date.getUTCMonth() + 1)) { const key = date.toISOString().slice(0, 7); monthly.push({ date: new Date(date), prompts: monthTotals.get(key) || 0 }); }
   const maxMonth = Math.max(1, ...monthly.map((item) => item.prompts)); const bars = el("div", "month-chart"); monthly.forEach((item) => { const bar = el("button", "month-bar"); bar.style.setProperty("--value", String(item.prompts / maxMonth * 100)); interactiveTooltip(bar, t("chart.monthPrompts", { month: monthFormatter.format(item.date), prompts: item.prompts })); const column = el("div", "month-column"); append(column, bar, el("small", "month-count", format(item.prompts)), el("span", "month-label", monthFormatter.format(item.date))); bars.append(column); });
   const records = el("div", "quotes"); append(records, quote("record.firstInPeriod", value(bundle.prompts.firstInPeriod)), quote("record.earliestStart", value(bundle.records.earliestActivity)), quote("record.latestActivity", value(bundle.records.latestActivity)));
-  const layout = el("div", "two-col"); append(layout, column("compact.calendar", calendarScroll), column("calendar.monthlyPrompts", bars)); append(root, layout, records); return root;
+  const layout = el("div", "two-col calendar-layout"); append(layout, column("compact.calendar", calendarScroll), column("calendar.monthlyPrompts", bars)); append(root, layout, records); return root;
 }
 
 function renderPrompts(bundle) {
