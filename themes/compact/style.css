@@ -12,6 +12,8 @@
   --yellow: #e2b631;
 }
 * { box-sizing: border-box; }
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { display: none; }
 html { background: transparent; }
 body { margin: 0; background: var(--paper); color: var(--ink); }
 button { color: inherit; font: inherit; }
