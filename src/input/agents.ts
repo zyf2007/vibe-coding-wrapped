@@ -6,6 +6,7 @@ import { readCodexFacts } from "./adapters/codex.js";
 import { mergeFactSets } from "../domain/facts.js";
 import { readOpenCodeFacts } from "./adapters/opencode.js";
 import { readPiFacts } from "./adapters/pi.js";
+import { readDshFacts } from "./adapters/dsh.js";
 import type { AgentType, FactSet, Scope } from "../domain/types.js";
 
 export type AgentInput = {
@@ -22,6 +23,19 @@ export type AgentDataSourceAdapter = {
 };
 
 export const agentAdapters: AgentDataSourceAdapter[] = [
+  {
+    id: "dsh",
+    async detect(root) {
+      try {
+        if (!(await stat(join(root, "settings.yaml"))).isFile()) return false;
+        const sessions = join(root, "sessions");
+        if (!(await stat(sessions)).isDirectory()) return false;
+        const entries = await readdir(sessions, { withFileTypes: true });
+        return entries.some((entry) => entry.isDirectory());
+      } catch { return false; }
+    },
+    read: readDshFacts,
+  },
   {
     id: "pi",
     async detect(root) {
@@ -87,6 +101,7 @@ export function defaultAgentPaths(): string[] {
   const xdgData = process.env.XDG_DATA_HOME ? resolve(process.env.XDG_DATA_HOME) : join(homedir(), ".local", "share");
   return [...new Set([
     process.env.CODEX_HOME ? resolve(process.env.CODEX_HOME) : join(homedir(), ".codex"),
+    process.env.DSH_HOME ? resolve(process.env.DSH_HOME) : join(homedir(), ".dsh"),
     process.env.CLAUDE_CONFIG_DIR ? resolve(process.env.CLAUDE_CONFIG_DIR) : join(homedir(), ".claude"),
     process.env.OPENCODE_DB ? resolve(process.env.OPENCODE_DB, "..") : join(xdgData, "opencode"),
     process.env.PI_CODING_AGENT_SESSION_DIR

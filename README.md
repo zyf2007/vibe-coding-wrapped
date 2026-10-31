@@ -1,6 +1,6 @@
 # Vibe Coding Wrapped
 
-Local-first CLI that turns Codex, Claude Code, and OpenCode session logs into a versioned JSON report and optional static HTML. Reports support calendar years and months, multiple copied Agent data directories, prompt highlights, tools, models, tokens, code changes, and optional Git activity.
+Local-first CLI that turns Codex, Claude Code, OpenCode, Pi, and DSH session logs into a versioned JSON report and optional static HTML. Reports support calendar years and months, multiple copied Agent data directories, prompt highlights, tools, models, tokens, code changes, and optional Git activity.
 
 ## Install
 
@@ -73,13 +73,14 @@ vibe-wrapped build --year 2026 \
   -i ~/.claude \
   -i ~/.local/share/opencode \
   -i ~/.pi/agent \
+  -i ~/.dsh \
   -i ./copied-from-laptop/.codex \
   --out ./wrapped-2026
 ```
 
-The CLI detects the Agent type from each directory. It recognizes Codex homes containing `sessions/`, Claude Code homes containing `projects/`, OpenCode data directories containing `opencode.db` or `storage/`, and Pi agent homes containing Pi's project-coded session directories. An unsupported or missing explicit input prints one path-first error line and is skipped; processing continues with other valid inputs.
+The CLI detects the Agent type from each directory. It recognizes Codex homes containing `sessions/`, Claude Code homes containing `projects/`, OpenCode data directories containing `opencode.db` or `storage/`, Pi agent homes containing Pi's project-coded session directories, and DSH homes containing `settings.yaml` and compressed sessions under `sessions/`. DSH input requires the `zstd` command-line decoder. An unsupported or missing explicit input prints one path-first error line and is skipped; processing continues with other valid inputs.
 
-Without `-i`, the CLI checks the standard locations for all four Agents: `$CODEX_HOME` or `~/.codex`, `$CLAUDE_CONFIG_DIR` or `~/.claude`, `$OPENCODE_DB` or `$XDG_DATA_HOME/opencode` (falling back to `~/.local/share/opencode`), and `$PI_CODING_AGENT_SESSION_DIR`, `$PI_CODING_AGENT_DIR`, or `~/.pi/agent`. Missing default locations are ignored silently.
+Without `-i`, the CLI checks the standard locations for all five Agents: `$CODEX_HOME` or `~/.codex`, `$CLAUDE_CONFIG_DIR` or `~/.claude`, `$OPENCODE_DB` or `$XDG_DATA_HOME/opencode` (falling back to `~/.local/share/opencode`), `$PI_CODING_AGENT_SESSION_DIR`, `$PI_CODING_AGENT_DIR`, or `~/.pi/agent`, and `$DSH_HOME` or `~/.dsh`. Missing default locations are ignored silently.
 
 Events from multiple inputs are deduplicated by stable content identity.
 

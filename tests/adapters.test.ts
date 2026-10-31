@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,8 +8,10 @@ import { readCodexFacts } from "../src/input/adapters/codex.js";
 import { normalizeTool } from "../src/domain/tools.js";
 import { readOpenCodeFacts } from "../src/input/adapters/opencode.js";
 import { readPiFacts } from "../src/input/adapters/pi.js";
+import { readDshFacts } from "../src/input/adapters/dsh.js";
 import { createPeriod } from "../src/domain/time.js";
 import type { Scope } from "../src/domain/types.js";
+import * as zlib from "node:zlib";
 
 const scope: Scope = { period: createPeriod("month", "2026-07"), timezone: "UTC", dayStartHour: 4, privacy: "redacted" };
 const temporaryDirectories: string[] = [];
@@ -87,6 +89,38 @@ describe("Codex adapter cache", () => {
       if (previousCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
       else process.env.XDG_CACHE_HOME = previousCacheHome;
     }
+  });
+
+});
+
+describe("DSH adapter", () => {
+  it("reads compressed user messages, usage, tools and filters plugin messages", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vibe-dsh-")); temporaryDirectories.push(root);
+    await mkdir(join(root, "sessions", "session-1"), { recursive: true });
+    await writeFile(join(root, "settings.yaml"), "version: test\n");
+    const rows = [
+      { type: "session", id: "s1", cwd: "/work/dsh", createdAt: Date.parse("2026-07-10T08:00:00Z") },
+      { type: "model/selection", time: Date.parse("2026-07-10T08:00:00Z"), data: { provider: "test", model: "dsh-model" } },
+      { type: "turn/start", seq: 2, time: Date.parse("2026-07-10T08:00:01Z"), data: { turn: 1 } },
+      { type: "user/message", seq: 3, time: Date.parse("2026-07-10T08:00:02Z"), data: { id: "u1", role: "user", source: { kind: "user" }, content: [{ type: "text", text: "检查 DSH 适配器" }] } },
+      { type: "user/message", seq: 4, time: Date.parse("2026-07-10T08:00:02Z"), data: { id: "system", role: "user", source: { kind: "plugin" }, content: [{ type: "text", text: "runtime context" }] } },
+      { type: "assistant/message", seq: 5, time: Date.parse("2026-07-10T08:00:03Z"), data: { turn: 1, step: 1, message: { role: "assistant", content: [] }, usage: { inputTokens: 10, cacheReadTokens: 2, outputTokens: 4, reasoningTokens: 1, totalTokens: 17 } } },
+      { type: "tool/call", seq: 6, time: Date.parse("2026-07-10T08:00:04Z"), data: { turn: 1, step: 1, callId: "c1", name: "bash", arguments: JSON.stringify({ command: "npm test" }) } },
+      { type: "tool/result", seq: 7, time: Date.parse("2026-07-10T08:00:05Z"), data: { message: { source: { kind: "tool", callId: "c1" }, content: [{ content: [{ type: "text", text: "exit_code: 0" }] }] } } },
+      { type: "turn/end", seq: 8, time: Date.parse("2026-07-10T08:00:06Z"), data: { turn: 1 } },
+    ];
+    const plain = join(root, "sessions", "session-1", "session.v3.jsonl");
+    await writeFile(plain, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+    const compressed = (zlib as typeof zlib & { zstdCompressSync: (input: Buffer) => Buffer }).zstdCompressSync(await readFile(plain));
+    const compressedPath = `${plain}.zstd`;
+    await writeFile(compressedPath, compressed);
+    const facts = await readDshFacts([root], scope, () => {}, { bypassCache: true });
+    expect(facts.sources[0].agentType).toBe("dsh");
+    expect(facts.prompts).toHaveLength(1);
+    expect(facts.prompts[0]).toMatchObject({ text: "检查 DSH 适配器", modelId: "test/dsh-model" });
+    expect(facts.tokens[0]).toMatchObject({ input: 10, cachedInput: 2, output: 4, reasoning: 1, total: 17 });
+    expect(facts.tools[0]).toMatchObject({ name: "shell.run", exitCode: 0, isCheckInvocation: true });
+    expect(facts.sessions).toHaveLength(1);
   });
 });
 

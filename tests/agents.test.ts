@@ -50,6 +50,14 @@ describe("detectAgentInputs", () => {
     expect(await detectAgentInputs([pi], () => {})).toEqual([{ type: "pi", root: pi }]);
   });
 
+  it("detects DSH roots before other sessions-based adapters", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vibe-agents-")); temporaryDirectories.push(root);
+    const dsh = join(root, "dsh");
+    await mkdir(join(dsh, "sessions", "session-1"), { recursive: true });
+    await writeFile(join(dsh, "settings.yaml"), "version: test\n");
+    expect(await detectAgentInputs([dsh], () => {})).toEqual([{ type: "dsh", root: dsh }]);
+  });
+
   it("deduplicates explicit inputs and applies exact root exclusions", () => {
     expect(selectAgentInputPaths(["/tmp/a", "/tmp/a", "/tmp/b"], ["/tmp/a"])).toEqual(["/tmp/b"]);
   });
